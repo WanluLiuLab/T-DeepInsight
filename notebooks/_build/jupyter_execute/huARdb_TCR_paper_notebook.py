@@ -2820,6 +2820,12 @@ for k,v in zip(known_tcrpmhc['peptide'], known_tcrpmhc['epitope']):
 known_tcrpmhc
 
 
+# In[32]:
+
+
+len(np.unique(known_tcrpmhc['peptide']))
+
+
 # In[9]:
 
 
@@ -2952,7 +2958,7 @@ sumstat.loc[sumstat.sum(1).sort_values(ascending=False).index].iloc[10:30].plot(
 fig.savefig("./figures/alpha_mhc_disease_composition.pdf")
 
 
-# # TCRDeepInsight
+# # TCR-DeepInsight Result Visualization
 
 # In[20]:
 

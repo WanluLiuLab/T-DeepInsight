@@ -3,7 +3,7 @@
 
 title: TCR paper notebook
 author: Ziwei Xue
-copyright: 2023  # Copyright year to be placed in the footer
+copyright: "2023"  # Copyright year to be placed in the footer
 logo: logo.png
 
 # Force re-execution of notebooks on each build.
@@ -22,7 +22,7 @@ bibtex_bibfiles:
 
 # Information about where the book exists on the web
 repository:
-  url: https://github.com/executablebooks/jupyter-book  # Online location of your book
+  url: https://github.com/WanluLiuLab/TCR-DeepInsight  # Online location of your book
   path_to_book: docs  # Optional path to your book, relative to the repository root
   branch: master  # Which branch of the repository should be used when creating links (optional)
 

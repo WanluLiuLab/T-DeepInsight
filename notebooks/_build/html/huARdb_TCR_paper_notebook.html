@@ -53,6 +53,7 @@ const thebe_selector_output = ".output, .cell_output"
     <script async="async" src="_static/sphinx-thebe.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="TCR-DeepInsigt Vignette" href="huARdb_TCR_DeepInsight_notebook.html" />
     <link rel="prev" title="Welcome to the huARdb TCR analysis notebook" href="intro.html" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="docsearch:language" content="None">
@@ -101,6 +102,11 @@ const thebe_selector_output = ".output, .cell_output"
  <li class="toctree-l1 current active">
   <a class="current reference internal" href="#">
    Import Basic Packages and Definitions
+  </a>
+ </li>
+ <li class="toctree-l1">
+  <a class="reference internal" href="huARdb_TCR_DeepInsight_notebook.html">
+   TCR-DeepInsigt Vignette
   </a>
  </li>
 </ul>
@@ -160,11 +166,11 @@ const thebe_selector_output = ".output, .cell_output"
         aria-label="Connect with source repository"><i class="fab fa-github"></i></button>
     <div class="dropdown-buttons sourcebuttons">
         <a class="repository-button"
-            href="https://github.com/executablebooks/jupyter-book"><button type="button" class="btn btn-secondary topbarbtn"
+            href="https://github.com/WanluLiuLab/TCR-DeepInsight"><button type="button" class="btn btn-secondary topbarbtn"
                 data-toggle="tooltip" data-placement="left" title="Source repository"><i
                     class="fab fa-github"></i>repository</button></a>
         <a class="issues-button"
-            href="https://github.com/executablebooks/jupyter-book/issues/new?title=Issue%20on%20page%20%2FhuARdb_TCR_paper_notebook.html&body=Your%20issue%20content%20here."><button
+            href="https://github.com/WanluLiuLab/TCR-DeepInsight/issues/new?title=Issue%20on%20page%20%2FhuARdb_TCR_paper_notebook.html&body=Your%20issue%20content%20here."><button
                 type="button" class="btn btn-secondary topbarbtn" data-toggle="tooltip" data-placement="left"
                 title="Open an issue"><i class="fas fa-lightbulb"></i>open issue</button></a>
         
@@ -185,7 +191,7 @@ const thebe_selector_output = ".output, .cell_output"
         aria-label="Launch interactive content"><i class="fas fa-rocket"></i></button>
     <div class="dropdown-buttons">
         
-        <a class="binder-button" href="https://mybinder.org/v2/gh/executablebooks/jupyter-book/master?urlpath=tree/docs/huARdb_TCR_paper_notebook.ipynb"><button type="button"
+        <a class="binder-button" href="https://mybinder.org/v2/gh/WanluLiuLab/TCR-DeepInsight/master?urlpath=tree/docs/huARdb_TCR_paper_notebook.ipynb"><button type="button"
                 class="btn btn-secondary topbarbtn" title="Launch Binder" data-toggle="tooltip"
                 data-placement="left"><img class="binder-button-logo"
                     src="_static/images/logo_binder.svg"
@@ -417,8 +423,8 @@ const thebe_selector_output = ".output, .cell_output"
   </ul>
  </li>
  <li class="toc-h1 nav-item toc-entry">
-  <a class="reference internal nav-link" href="#tcrdeepinsight">
-   TCRDeepInsight
+  <a class="reference internal nav-link" href="#tcr-deepinsight-result-visualization">
+   TCR-DeepInsight Result Visualization
   </a>
  </li>
 </ul>
@@ -651,8 +657,8 @@ const thebe_selector_output = ".output, .cell_output"
   </ul>
  </li>
  <li class="toc-h1 nav-item toc-entry">
-  <a class="reference internal nav-link" href="#tcrdeepinsight">
-   TCRDeepInsight
+  <a class="reference internal nav-link" href="#tcr-deepinsight-result-visualization">
+   TCR-DeepInsight Result Visualization
   </a>
  </li>
 </ul>
@@ -4100,6 +4106,18 @@ Deprecated in NumPy 1.20; for more details and guidance: https://numpy.org/devdo
 </div>
 <div class="cell docutils container">
 <div class="cell_input docutils container">
+<div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="nb">len</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">known_tcrpmhc</span><span class="p">[</span><span class="s1">&#39;peptide&#39;</span><span class="p">]))</span>
+</pre></div>
+</div>
+</div>
+<div class="cell_output docutils container">
+<div class="output text_plain highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>1037
+</pre></div>
+</div>
+</div>
+</div>
+<div class="cell docutils container">
+<div class="cell_input docutils container">
 <div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">peptide_mapping</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="k">for</span> <span class="n">a</span><span class="p">,</span><span class="n">b</span><span class="p">,</span><span class="n">p</span> <span class="ow">in</span> <span class="n">known_tcrpmhc</span><span class="o">.</span><span class="n">loc</span><span class="p">[:,[</span><span class="s1">&#39;CDR3a&#39;</span><span class="p">,</span><span class="s1">&#39;CDR3b&#39;</span><span class="p">,</span><span class="s1">&#39;peptide&#39;</span><span class="p">]]</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">():</span>
     <span class="n">cdr3</span> <span class="o">=</span> <span class="s1">&#39;</span><span class="si">{}</span><span class="s1">-</span><span class="si">{}</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">a</span><span class="p">,</span><span class="n">b</span><span class="p">)</span>
@@ -4197,7 +4215,7 @@ Deprecated in NumPy 1.20; for more details and guidance: https://numpy.org/devdo
 <div class="output text_plain highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>&lt;AxesSubplot:&gt;
 </pre></div>
 </div>
-<img alt="_images/huARdb_TCR_paper_notebook_109_1.png" src="_images/huARdb_TCR_paper_notebook_109_1.png" />
+<img alt="_images/huARdb_TCR_paper_notebook_110_1.png" src="_images/huARdb_TCR_paper_notebook_110_1.png" />
 </div>
 </div>
 <div class="cell docutils container">
@@ -4223,7 +4241,7 @@ Deprecated in NumPy 1.20; for more details and guidance: https://numpy.org/devdo
 </div>
 </div>
 <div class="cell_output docutils container">
-<img alt="_images/huARdb_TCR_paper_notebook_110_0.png" src="_images/huARdb_TCR_paper_notebook_110_0.png" />
+<img alt="_images/huARdb_TCR_paper_notebook_111_0.png" src="_images/huARdb_TCR_paper_notebook_111_0.png" />
 </div>
 </div>
 <div class="cell docutils container">
@@ -4250,13 +4268,13 @@ Deprecated in NumPy 1.20; for more details and guidance: https://numpy.org/devdo
 </div>
 </div>
 <div class="cell_output docutils container">
-<img alt="_images/huARdb_TCR_paper_notebook_111_0.png" src="_images/huARdb_TCR_paper_notebook_111_0.png" />
+<img alt="_images/huARdb_TCR_paper_notebook_112_0.png" src="_images/huARdb_TCR_paper_notebook_112_0.png" />
 </div>
 </div>
 </div>
 </div>
-<div class="tex2jax_ignore mathjax_ignore section" id="tcrdeepinsight">
-<h1>TCRDeepInsight<a class="headerlink" href="#tcrdeepinsight" title="Permalink to this headline">¶</a></h1>
+<div class="tex2jax_ignore mathjax_ignore section" id="tcr-deepinsight-result-visualization">
+<h1>TCR-DeepInsight Result Visualization<a class="headerlink" href="#tcr-deepinsight-result-visualization" title="Permalink to this headline">¶</a></h1>
 <div class="cell docutils container">
 <div class="cell_input docutils container">
 <div class="highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">result_tcr</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="s2">&quot;./data//result_disease_specific_tcr.csv&quot;</span><span class="p">)</span>
@@ -4608,7 +4626,7 @@ Deprecated in NumPy 1.20; for more details and guidance: https://numpy.org/devdo
 <div class="output text_plain highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>&lt;matplotlib.collections.PathCollection at 0x1405c45e0&gt;
 </pre></div>
 </div>
-<img alt="_images/huARdb_TCR_paper_notebook_115_1.png" src="_images/huARdb_TCR_paper_notebook_115_1.png" />
+<img alt="_images/huARdb_TCR_paper_notebook_116_1.png" src="_images/huARdb_TCR_paper_notebook_116_1.png" />
 </div>
 </div>
 <div class="cell docutils container">
@@ -4637,7 +4655,7 @@ Deprecated in NumPy 1.20; for more details and guidance: https://numpy.org/devdo
 <div class="output text_plain highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>&lt;matplotlib.collections.PathCollection at 0x1405f10d0&gt;
 </pre></div>
 </div>
-<img alt="_images/huARdb_TCR_paper_notebook_116_1.png" src="_images/huARdb_TCR_paper_notebook_116_1.png" />
+<img alt="_images/huARdb_TCR_paper_notebook_117_1.png" src="_images/huARdb_TCR_paper_notebook_117_1.png" />
 </div>
 </div>
 <div class="cell docutils container">
@@ -4666,7 +4684,7 @@ Deprecated in NumPy 1.20; for more details and guidance: https://numpy.org/devdo
 <div class="output text_plain highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>&lt;matplotlib.collections.PathCollection at 0x140636100&gt;
 </pre></div>
 </div>
-<img alt="_images/huARdb_TCR_paper_notebook_117_1.png" src="_images/huARdb_TCR_paper_notebook_117_1.png" />
+<img alt="_images/huARdb_TCR_paper_notebook_118_1.png" src="_images/huARdb_TCR_paper_notebook_118_1.png" />
 </div>
 </div>
 <div class="cell docutils container">
@@ -4695,7 +4713,7 @@ Deprecated in NumPy 1.20; for more details and guidance: https://numpy.org/devdo
 <div class="output text_plain highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>&lt;matplotlib.collections.PathCollection at 0x14077b580&gt;
 </pre></div>
 </div>
-<img alt="_images/huARdb_TCR_paper_notebook_118_1.png" src="_images/huARdb_TCR_paper_notebook_118_1.png" />
+<img alt="_images/huARdb_TCR_paper_notebook_119_1.png" src="_images/huARdb_TCR_paper_notebook_119_1.png" />
 </div>
 </div>
 <div class="cell docutils container">
@@ -4724,7 +4742,7 @@ Deprecated in NumPy 1.20; for more details and guidance: https://numpy.org/devdo
 <div class="output text_plain highlight-myst-ansi notranslate"><div class="highlight"><pre><span></span>&lt;matplotlib.collections.PathCollection at 0x1407f6220&gt;
 </pre></div>
 </div>
-<img alt="_images/huARdb_TCR_paper_notebook_119_1.png" src="_images/huARdb_TCR_paper_notebook_119_1.png" />
+<img alt="_images/huARdb_TCR_paper_notebook_120_1.png" src="_images/huARdb_TCR_paper_notebook_120_1.png" />
 </div>
 </div>
 </div>
@@ -4761,6 +4779,13 @@ Deprecated in NumPy 1.20; for more details and guidance: https://numpy.org/devdo
             <p class="prev-next-title">Welcome to the huARdb TCR analysis notebook</p>
         </div>
     </a>
+    <a class='right-next' id="next-link" href="huARdb_TCR_DeepInsight_notebook.html" title="next page">
+    <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">TCR-DeepInsigt Vignette</p>
+    </div>
+    <i class="fas fa-angle-right"></i>
+    </a>
 </div>
             
         </div>
@@ -4770,7 +4795,7 @@ Deprecated in NumPy 1.20; for more details and guidance: https://numpy.org/devdo
     
       By Ziwei Xue<br/>
     
-        &copy; Copyright 2021.<br/>
+        &copy; Copyright 2023.<br/>
   </p>
 </footer>
 </main>
