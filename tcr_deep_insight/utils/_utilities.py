@@ -20,6 +20,30 @@ def multi_values_dict(keys, values):
             ret[k].append(v)
     return ret
 
+def mafft_alignment(sequences):
+    result = []
+    import sys
+    from Bio.Align.Applications import MafftCommandline
+    import tempfile
+    with tempfile.NamedTemporaryFile() as temp:
+        temp.write('\n'.join(list(map(lambda x: '>seq{}\n'.format(x[0]) + x[1], enumerate(sequences)))).encode())
+        temp.seek(0)
+        mafft_cline = MafftCommandline(input=temp.name)
+        stdout,stderr=mafft_cline()
+    for i,j in enumerate(stdout.split("\n")):
+        if i % 2 != 0:
+            result.append(j.replace("-","."))
+    return result
+
+def seqs2mat(sequences, char_set = list('ACDEFGHIKLMNPQRSTVWY'), gap_character = '.'):
+    mat = np.zeros((len(sequences[0]), len(char_set)))
+    for i in range(len(sequences[0])):
+        count = Counter(list(map(lambda x:x[i], sequences)))
+        for k,v in count.items():
+            if k != gap_character:
+                mat[i][char_set.index(k)] = v
+    mat = pd.DataFrame(mat, columns = char_set)
+    return mat
 
 def random_subset_by_key(adata, key, n):
     from collections import Counter
@@ -128,3 +152,16 @@ def read_tsv(path, header:bool = True, skip_first_line: bool = False, return_pan
                 return pd.DataFrame(list(filter(lambda x: len(x) == 125, result)))
         else:
             return result
+
+def FLATTEN(x): 
+    return [i for s in x for i in s]
+
+def default_aggrf(i):
+    if len(np.unique(i)) == 1:
+        return i[0]
+    if len(i) == 2:
+        return "Ambiguous"
+    else:
+        c = Counter(i)
+        return sorted(c.items(), key=lambda x: -x[1])[0][0]
+            

@@ -1,0 +1,54 @@
+
+The following changes were made to the original (version 7.487):
+
+Added python module: `mafftmodule.c`, `mafftmodule.h`
+Added output wrapper: `wrapio.c`, `wrapio.h`
+
+Renamed `disttbfast.c` and `tbfast.c` main() functions
+and put ``#ifndef ismodule` around them.
+
+Modified arguments() as static in `tbfast.c`, `disttbfast.c`, `dvtditr.c`
+
+`dvtditr`: fclose( prep_g ); for flushing
+
+Added section to the following files: fft.h mltaln.h mtxutl.c
+```
+#ifdef ismodule
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
+#include "wrapio.h"
+#endif
+```
+
+Changed for MSVC compatibility:
+```
+diff `disttbfast.c`:
+1422c1422
+<       return (int)((char *)p - (char *)q);
+---
+>       return (int)((void *)p - (void *)q);
+1429c1429
+<       return (int)((char *)q - (char *)p);
+---
+>       return (int)((void *)q - (void *)p);
+
+diff `dp.h`:
+2,4d1
+< #ifdef _MSC_VER
+< #define TLS __declspec(thread)
+< #else
+6d2
+< #endif
+8c4
+< #define TLS
+---
+> #define TLS
+
+diff `mltaln.h`:
+344,346d338
+< #ifdef _MSC_VER
+< #define TLS __declspec(thread)
+< #else
+348d339
+< #endif
+```

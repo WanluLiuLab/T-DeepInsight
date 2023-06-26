@@ -7,8 +7,7 @@ from torch.utils.data.sampler import SubsetRandomSampler
 from torch.distributions import kl_divergence as kld
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-# Faiss
-import faiss
+
 # Hugginface Transformers
 from transformers import (
     BertConfig,
@@ -22,7 +21,7 @@ from joblib import dump, load
 import datasets
 import numpy as np
 from pathlib import Path
-import umap 
+import umap
 
 # Built-in
 import time
@@ -31,40 +30,24 @@ import pandas as pd
 import scanpy as sc
 from scipy.sparse import issparse
 from sklearn.utils import class_weight
-from collections import Counter 
+from collections import Counter
 from itertools import chain
 from copy import deepcopy
 import json
 import tqdm
-from typing import Mapping, Union, Iterable, Tuple, Optional, Mapping
+from typing import Callable, Mapping, Union, Iterable, Tuple, Optional, Mapping
 import os
 import warnings
 
-# Custom
+# Package
 from ._primitives import *
-from ._model_utils import to_embedding_tcr_only_from_pandas_v2
 from ._tokenizer import TRABTokenizer
-from ._config import BERT_CONFIG
+from ._config import get_config
 
-from ..utils._tensor_utils import one_hot, get_k_elements
-
-from ..utils._amino_acids import (
-    _AMINO_ACIDS,
-    _AMINO_ACIDS_ADDITIONALS,
-    _AMINO_ACIDS_INDEX_REVERSE,
-    _AMINO_ACIDS_INDEX
-)
-
-from ..utils._loss import LossFunction 
-from ..utils._tcr import (
-    VJ_GENES, 
-    VJ_GENES2INDEX,
-    VJ_GENES2INDEX_REVERSE,
-    TRAV_GENES, 
-    TRAJ_GENES, 
-    TRBV_GENES, 
-    TRBJ_GENES
-)
+from ..utils._tensor_utils import one_hot, get_k_elements, get_last_k_elements
+from ..utils._decorators import typed
+from ..utils._loss import LossFunction
+from ..utils._logger import mt
 
 from ..utils._utilities import random_subset_by_key
 from ..utils._compat import Literal
@@ -77,25 +60,36 @@ from ..utils._definitions import (
     TRB_DEFINITION,
 )
 from ..utils._logger import mt
+
 MODULE_PATH = Path(__file__).parent
 warnings.filterwarnings("ignore")
 
 class TRABModelMixin(nn.Module):
-    def __init__(self, 
-        bert_config: BertConfig, 
+    def __init__(self,
+        bert_config: BertConfig,
         pooling: Literal["cls", "mean", "max", "pool", "trb", "tra", "weighted"] = "mean",
         pooling_cls_position: int = 0,
         pooling_weight = (0.1,0.9),
         hidden_layers: Iterable[int] = [512,192],
         labels_number: int = 1,
     ) -> None:
+        """
+        TRABModel is a BERT model that takes in a αβTCR sequence
+        :param bert_config: BertConfig
+        :param pooling: Pooling method, one of "cls", "mean", "max", "pool", "trb", "tra", "weighted"
+        :param pooling_cls_position: Position of the cls token
+        :param pooling_weight: Weight of the cls token
+        :param hidden_layers: Hidden layers of the classifier
+        :param labels_number: Number of labels
+
+        """
         super(TRABModelMixin, self).__init__()
         self.model = BertForMaskedLM(bert_config)
         self.pooler = nn.Sequential(
             nn.Linear(bert_config.hidden_size,bert_config.hidden_size),
             nn.Tanh()
         )
-        
+
         self.pooling = pooling
         self.pooling_cls_position = pooling_cls_position
         self.pooling_weight = pooling_weight
@@ -106,21 +100,30 @@ class TRABModelMixin(nn.Module):
 
         self.fct = nn.Sequential(
             nn.Linear(self.config.hidden_size, hidden_layers[0]),
-            nn.ReLU(), 
-            nn.Linear(hidden_layers[0],hidden_layers[1]), 
+            nn.ReLU(),
+            nn.Linear(hidden_layers[0],hidden_layers[1]),
             nn.ReLU(),
             nn.Linear(hidden_layers[1], labels_number)
         )
-    
+
     def forward(self,
         *,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         labels: torch.Tensor,
         token_type_ids: torch.Tensor,
-        ignore_batch_zero: bool = False,
         output_hidden_states = True,
     ):
+        '''
+        Forward pass of the model
+
+        :param input_ids: Input ids
+        :param attention_mask: Attention mask
+        :param labels: Labels
+        :param token_type_ids: Token type ids
+
+        :return: Output of the model
+        '''
 
         output = self.model.forward(
                 input_ids = input_ids,
@@ -151,7 +154,7 @@ class TRABModelMixin(nn.Module):
                         ]),
                         :
                     ].mean(1) + output.hidden_states[-1][:, 0] + output.hidden_states[-1][:, hidden_states_length]
-                else: 
+                else:
                     hidden_states = output.hidden_states[-1][
                         :,
                         torch.arange(1,hidden_states_length),
@@ -167,7 +170,7 @@ class TRABModelMixin(nn.Module):
                         ]),
                         :
                     ].mean(1) + output.hidden_states[-1][:, 0] + output.hidden_states[-1][:, hidden_states_length]
-                else: 
+                else:
                     hidden_states = output.hidden_states[-1][
                         :,
                         torch.arange(hidden_states_length+1,hidden_states_length*2),
@@ -190,7 +193,7 @@ class TRABModelMixin(nn.Module):
                         ]),
                         :
                     ] * self.pooling_weight[1]).mean(1) + output.hidden_states[-1][:, 0] + output.hidden_states[-1][:, hidden_states_length]
-                else: 
+                else:
                     hidden_states = (output.hidden_states[-1][
                         :,
                         torch.arange(hidden_states_length+1,hidden_states_length*2),
@@ -203,41 +206,46 @@ class TRABModelMixin(nn.Module):
             else:
                 raise ValueError("Unrecognized pool strategy")
 
-        prediction_out = None
+        prediction_out = self.fct(hidden_states)
 
         return {
             "output": output,
             "hidden_states": hidden_states,
             "prediction_out": prediction_out,
         }
-
-
 class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
+    """Vanilla single-cell VAE"""
     def __init__(self, *,
-                       adata: Optional[sc.AnnData] = None,
-                       hidden_stacks: List[int] = [128], 
-                       n_latent: int = 10,
-                       n_batch: int = 0,
-                       n_label: int = 0,
-                       batch_key = None,
-                       label_key = None,
-                       dispersion:  Literal["gene", "gene-batch", "gene-cell"] = "gene-cell", 
-                       log_variational: bool = True,
-                       bias: bool = True,
-                       use_batch_norm: bool = True,
-                       use_layer_norm: bool = False,
-                       batch_hidden_dim: int = 8,
-                       batch_embedding: Literal["embedding", "onehot"] = "onehot",
-                       constrain_latent_embedding: bool = False,
-                       encode_libsize: bool = False,
-                       dropout_rate: float = 0.1,
-                       activation_fn: nn.Module = nn.ReLU,
-                       inject_batch: bool = True,
-                       inject_label: bool = False,
-                       use_attention: bool = False,
-                       device: Union[str, torch.device] = "cpu") -> None:
+       adata: Optional[sc.AnnData] = None,
+       hidden_stacks: List[int] = [128], 
+       n_latent: int = 10,
+       n_batch: int = 0,
+       n_label: int = 0,
+       n_categorical_covariate: Optional[Iterable[int]] = None,
+       batch_key = None,
+       label_key = None,
+       categorical_covariate_keys: Optional[Iterable[str]] = None,
+       dispersion:  Literal["gene", "gene-batch", "gene-cell"] = "gene-cell", 
+       log_variational: bool = True,
+       bias: bool = True,
+       use_batch_norm: bool = True,
+       use_layer_norm: bool = False,
+       batch_hidden_dim: int = 8,
+       batch_embedding: Literal["embedding", "onehot"] = "onehot",
+       constrain_latent_method: Literal['mse', 'normal'] = 'mse',
+       constrain_latent_embedding: bool = False,
+       encode_libsize: bool = False,
+       dropout_rate: float = 0.1,
+       activation_fn: nn.Module = nn.ReLU,
+       inject_batch: bool = True,
+       inject_label: bool = False,
+       inject_categorical_covariate: bool = True,
+       use_attention: bool = False,
+       mmd_key: Optional[Literal['batch','label']] = None,
+       device: Union[str, torch.device] = "cpu"
+    ) -> None:
         """
-        @brief VAEMixin               Variational Autoencoder for a Raw Gene Expression Matrix
+        @brief VAE                    Variational Autoencoder for a Raw Gene Expression Matrix
         
         @param adata                  sc.AnnData object as input dataset
         @param hidden_stacks          List of number of nodes in each autencoder layer. The size of last element is 
@@ -250,14 +258,15 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
                use_batch_norm, 
                use_layer_norm, 
                activation_fn          parameters for the linear autoencoders
-        @param device                 device to be used for the VAEMixin model. Default is CUDA
+        @param device                 device to be used for the VAE model. Default is CUDA
         """
 
         super(VAEMixin, self).__init__()
-        self.gex_adata = adata
+        self.adata = adata
         self.in_dim = adata.shape[1] if adata else -1
         self.n_hidden = hidden_stacks[-1]
         self.n_latent = n_latent
+        self.n_categorical_covariate = n_categorical_covariate
         self._hidden_stacks = hidden_stacks 
 
         if n_batch > 0 and not batch_key:
@@ -267,13 +276,17 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
 
         self.label_key = label_key
         self.batch_key = batch_key
+        self.categorical_covariate_keys = categorical_covariate_keys
         self.n_batch = n_batch
         self.n_label = n_label
         self.new_adata_key = 'new_adata'
         self.new_adata_code = None
         self.log_variational = log_variational
+        self.mmd_key = mmd_key
         self.constrain_latent_embedding = constrain_latent_embedding
+        self.constrain_latent_method = constrain_latent_method
         self.device=device
+
         self.initialize_dataset()
 
         self.batch_embedding = batch_embedding
@@ -282,6 +295,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         self.batch_hidden_dim = batch_hidden_dim
         self.inject_batch = inject_batch
         self.inject_label = inject_label
+        self.inject_categorical_covariate = inject_categorical_covariate
         self.encode_libsize = encode_libsize
         self.dispersion = dispersion
         self.use_attention = use_attention
@@ -337,14 +351,24 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         # DECODERS #
         ############
 
-        if self.n_batch > 0 and self.n_label > 0 and inject_batch and inject_label:
-            decoder_n_cat_list = [self.n_batch, self.n_label]
-        elif self.n_batch > 0 and inject_batch:
-            decoder_n_cat_list = [self.n_batch]
-        elif self.n_label > 0 and inject_label:
-            decoder_n_cat_list = [self.n_label]
+        if self.n_categorical_covariate_ is not None and self.inject_categorical_covariate:
+            if self.n_batch > 0 and self.n_label > 0 and inject_batch and inject_label:
+                decoder_n_cat_list = [self.n_batch, self.n_label, *self.n_categorical_covariate]
+            elif self.n_batch > 0 and inject_batch:
+                decoder_n_cat_list = [self.n_batch, *self.n_categorical_covariate]
+            elif self.n_label > 0 and inject_label:
+                decoder_n_cat_list = [self.n_label, *self.n_categorical_covariate]
+            else:
+                decoder_n_cat_list = None
         else:
-            decoder_n_cat_list = None
+            if self.n_batch > 0 and self.n_label > 0 and inject_batch and inject_label:
+                decoder_n_cat_list = [self.n_batch, self.n_label]
+            elif self.n_batch > 0 and inject_batch:
+                decoder_n_cat_list = [self.n_batch]
+            elif self.n_label > 0 and inject_label:
+                decoder_n_cat_list = [self.n_label]
+            else:
+                decoder_n_cat_list = None
         
         self.decoder_n_cat_list = decoder_n_cat_list
 
@@ -378,24 +402,24 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
     def initialize_dataset(self):
         mt("Initializing dataset into memory")
         if self.batch_key is not None:
-            n_batch_ = len(np.unique(self.gex_adata.obs[self.batch_key]))
+            n_batch_ = len(np.unique(self.adata.obs[self.batch_key]))
             if self.n_batch != n_batch_:
                 mt(f"warning: the provided n_batch={self.n_batch} does not match the number of batch in the adata.")
 
-                mt(f"setting n_batch to {n_batch_}")
+                mt(f"         setting n_batch to {n_batch_}")
                 self.n_batch = n_batch_
-            self.batch_category = pd.Categorical(self.gex_adata.obs[self.batch_key])
+            self.batch_category = pd.Categorical(self.adata.obs[self.batch_key])
             self.batch_category_summary = dict(Counter(self.batch_category))
             
         if self.label_key is not None:
-            n_label_ = len(np.unique(list(filter(lambda x: x != self.new_adata_key, self.gex_adata.obs[self.label_key]))))
+            n_label_ = len(np.unique(list(filter(lambda x: x != self.new_adata_key, self.adata.obs[self.label_key]))))
 
             if self.n_label != n_label_:
                 mt(f"warning: the provided n_label={self.n_label} does not match the number of batch in the adata.")
 
-                mt(f"setting n_label to {n_label_}")
+                mt(f"         setting n_label to {n_label_}")
                 self.n_label = n_label_
-            self.label_category = pd.Categorical(self.gex_adata.obs[self.label_key])
+            self.label_category = pd.Categorical(self.adata.obs[self.label_key])
             self.label_category_summary = dict(Counter(list(filter(lambda x: x != self.new_adata_key, self.label_category))))
 
             self.label_category_weight = len(self.label_category) / len(self.label_category.categories) * torch.tensor([self.label_category_summary[x] for x in list(filter(lambda x: x != self.new_adata_key, self.label_category.categories))], dtype=torch.float64).to(self.device)
@@ -403,40 +427,89 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
             if self.new_adata_key in self.label_category.categories:
                 self.new_adata_code = list(self.label_category.categories).index(self.new_adata_key)
 
-        # X = self.gex_adata.X.toarray() if issparse(self.gex_adata.X) else self.gex_adata.X
-        X = self.gex_adata.X
+        self.n_categorical_covariate_ = None
+        if self.categorical_covariate_keys is not None:
+            self.n_categorical_covariate_ = [len(np.unique(self.adata.obs[x])) for x in self.categorical_covariate_keys]
+            if self.n_categorical_covariate == None or len(self.n_categorical_covariate_) != len(self.n_categorical_covariate):
+                mt(f"warning: the provided n_categorical_covariate={self.n_categorical_covariate} does not match the number of categorical covariate in the adata.")
+                mt(f"         setting n_categorical_covariate to {self.n_categorical_covariate_}")
+                self.n_categorical_covariate = self.n_categorical_covariate_
+            else:
+                for e,(i,j) in enumerate(zip(self.n_categorical_covariate_, self.n_categorical_covariate)):
+                    if i != j:
+                        mt(f"n_categorical_covariate {self.categorical_covariate_keys[e]} does not match the number in the adata.")
+                        mt(f"         setting n_categorical_covariate {e} to {i}")
+                        self.n_categorical_covariate[e] = i
+            self.categorical_covariate_category = [pd.Categorical(self.adata.obs[x]) for x in self.categorical_covariate_keys]
+            self.categorical_covariate_category_summary = [dict(Counter(x)) for x in self.categorical_covariate_category]
+
+        X = self.adata.X
+        if self.log_variational:
+            self.max_gene_exp = np.log(np.max(X)+1)
+        else:
+            self.max_gene_exp = np.max(X)
 
         self._n_record = X.shape[0]
         self._indices = np.array(list(range(self._n_record)))
         batch_categories, label_categories = None, None
+        categorical_covariate_categories = None
+
         if self.batch_key is not None:
-            if self.batch_key not in self.gex_adata.obs.columns:
+            if self.batch_key not in self.adata.obs.columns:
                 raise ValueError(f"batch_key {self.batch_key} is not found in AnnData obs")
             batch_categories = np.array(self.batch_category.codes)
         if self.label_key is not None:
-            if self.label_key not in self.gex_adata.obs.columns:
+            if self.label_key not in self.adata.obs.columns:
                 raise ValueError(f"label_key {self.label_key} is not found in AnnData obs")
             label_categories = np.array(self.label_category.codes)
-        
-        if self.constrain_latent_embedding and "X_pca" in self.gex_adata.obsm.keys():
-            P = self.gex_adata.obsm["X_pca"]
-            if batch_categories is not None and label_categories is not None:
-                _dataset = list(zip(X, P, batch_categories, label_categories))
-            elif batch_categories is not None:
-                _dataset = list(zip(X, P, batch_categories))
-            elif label_categories is not None:
-                _dataset = list(zip(X, P, label_categories))
+        if self.categorical_covariate_keys is not None:
+            for e,i in enumerate(self.categorical_covariate_keys):
+                if i not in self.adata.obs.columns:
+                    raise ValueError(f"categorical_covariate_keys {i} is not found in AnnData obs")
+            categorical_covariate_categories = [np.array(x.codes) for x in self.categorical_covariate_category]
+
+
+        if self.constrain_latent_embedding and "X_pca" in self.adata.obsm.keys():
+            P = self.adata.obsm["X_pca"]
+            if categorical_covariate_categories is not None:
+                if batch_categories is not None and label_categories is not None:
+                    _dataset = list(zip(X, P, batch_categories, label_categories, *categorical_covariate_categories))
+                elif batch_categories is not None:
+                    _dataset = list(zip(X, P, batch_categories, *categorical_covariate_categories))
+                elif label_categories is not None:
+                    _dataset = list(zip(X, P, label_categories, *categorical_covariate_categories))
+                else:
+                    _dataset = list(zip(X, P, *categorical_covariate_categories))
             else:
-                _dataset = list(zip(X, P))
+                if batch_categories is not None and label_categories is not None:
+                    _dataset = list(zip(X, P, batch_categories, label_categories))
+                elif batch_categories is not None:
+                    _dataset = list(zip(X, P, batch_categories))
+                elif label_categories is not None:
+                    _dataset = list(zip(X, P, label_categories))
+                else:
+                    _dataset = list(zip(X, P))
         else:
-            if batch_categories is not None and label_categories is not None:
-                _dataset = list(zip(X, batch_categories, label_categories))
-            elif batch_categories is not None:
-                _dataset = list(zip(X, batch_categories))
-            elif label_categories is not None:
-                _dataset = list(zip(X, label_categories))
+            if categorical_covariate_categories is not None:
+                if batch_categories is not None and label_categories is not None:
+                    _dataset = list(zip(X, batch_categories, label_categories, *categorical_covariate_categories))
+                elif batch_categories is not None:
+                    _dataset = list(zip(X, batch_categories, *categorical_covariate_categories))
+                elif label_categories is not None:
+                    _dataset = list(zip(X, label_categories, *categorical_covariate_categories))
+                else:
+                    _dataset = list(zip(X, *categorical_covariate_categories))
             else:
-                _dataset = X
+                if batch_categories is not None and label_categories is not None:
+                    _dataset = list(zip(X, batch_categories, label_categories))
+                elif batch_categories is not None:
+                    _dataset = list(zip(X, batch_categories))
+                elif label_categories is not None:
+                    _dataset = list(zip(X, label_categories))
+                else:
+                    _dataset = list(X)
+        
+        
         _shuffle_indices = list(range(len(_dataset)))
         np.random.shuffle(_shuffle_indices)
         self._dataset = np.array([_dataset[i] for i in _shuffle_indices])
@@ -496,15 +569,26 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         lib_size:torch.tensor, 
         batch_index: torch.tensor = None, 
         label_index: torch.tensor = None,
+        categorical_covariate_index: torch.tensor = None,
         eps: float = 1e-4
     ):
         z = H["z"] # cell latent representation
-        if batch_index is not None and label_index is not None and self.inject_batch and self.inject_label:
-            z = torch.hstack([z, batch_index, label_index])
-        elif batch_index is not None and self.inject_batch:
-            z = torch.hstack([z, batch_index])
-        elif label_index is not None and self.inject_label:
-            z = torch.hstack([z, label_index])
+
+        if categorical_covariate_index is not None and self.inject_categorical_covariate:
+            if batch_index is not None and label_index is not None and self.inject_batch and self.inject_label:
+                z = torch.hstack([z, batch_index, label_index, *categorical_covariate_index])
+            elif batch_index is not None and self.inject_batch:
+                z = torch.hstack([z, batch_index, *categorical_covariate_index])
+            elif label_index is not None and self.inject_label:
+                z = torch.hstack([z, label_index, *categorical_covariate_index])
+        else:
+            if batch_index is not None and label_index is not None and self.inject_batch and self.inject_label:
+                z = torch.hstack([z, batch_index, label_index])
+            elif batch_index is not None and self.inject_batch:
+                z = torch.hstack([z, batch_index])
+            elif label_index is not None and self.inject_label:
+                z = torch.hstack([z, label_index])
+
         # eps to prevent numerical overflow and NaN gradient
         px = self.decoder(z)
         h = None
@@ -540,7 +624,9 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         lib_size: torch.tensor, 
         batch_index: torch.tensor = None,
         label_index: torch.tensor = None,
-        P: torch.tensor = None
+        categorical_covariate_index: torch.tensor = None,
+        P: torch.tensor = None,
+        reduction: str = "sum"
     ):
         H = self.encode(X, batch_index)
         q_mu = H["q_mu"]
@@ -549,21 +635,19 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         scale = torch.ones_like(q_var)
         kldiv_loss = kld(Normal(q_mu, q_var.sqrt()), Normal(mean, scale)).sum(dim = 1)
         prediction_loss = torch.tensor(0.)
-        R = self.decode(H, lib_size, batch_index, label_index)
+
+        R = self.decode(H, lib_size, batch_index, label_index, categorical_covariate_index)
    
         
         reconstruction_loss = LossFunction.zinb_reconstruction_loss(
             X,
             mu = R['px_rna_scale'],
             theta = R['px_rna_rate'].exp(), 
-            gate_logits = R['px_rna_dropout']
+            gate_logits = R['px_rna_dropout'],
+            reduction = reduction
         )
 
-        '''
-        reconstruction_loss = -zinb(mu=R['px_rna_scale'], theta=R['px_rna_rate'].exp(), zi_logits=R['px_rna_dropout']).log_prob(X).sum(dim=-1)
-        '''
 
-        acc = torch.tensor(0.)
 
         if self.n_label > 0:
             criterion = nn.CrossEntropyLoss(weight=self.label_category_weight)
@@ -582,41 +666,77 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         if self.constrain_latent_embedding and P is not None:
             # Constrains on cells with no PCA information will be ignored
             latent_constrain_mask = P.mean(1) != 0
-            latent_constrain = (nn.MSELoss(reduction='none')(P, q_mu).sum(1) * latent_constrain_mask ).sum() / len(list(filter(lambda x: x != 0, P.detach().cpu().numpy().mean(1))))
+            if self.constrain_latent_method == 'mse':
+                latent_constrain = (
+                    nn.MSELoss(reduction='none')(P, q_mu).sum(1) * latent_constrain_mask 
+                ).sum() / len(list(filter(lambda x: x != 0, P.detach().cpu().numpy().mean(1))))
+            elif self.constrain_latent_method == 'normal':
+                latent_constrain = (
+                    kld(Normal(q_mu, q_var.sqrt()), Normal(P, torch.ones_like(P))).sum(1) * latent_constrain_mask
+                ).sum() / len(list(filter(lambda x: x != 0, P.detach().cpu().numpy().mean(1))))
 
+        mmd_loss = torch.tensor(0.)
+        if self.mmd_key:
+            if self.mmd_key == 'batch':
+                mmd_loss = self.MMDLoss(H['q'], batch_index.detach().cpu().numpy())
+            elif self.mmd_key == 'label':
+                mmd_loss = self.MMDLoss(H['q'], label_index.detach().cpu().numpy())
+            else:
+                raise ValueError('mmd_key should be one of batch, label')
+            
         loss_record = {
             "reconstruction_loss": reconstruction_loss,
             "prediction_loss": prediction_loss,
             "kldiv_loss": kldiv_loss,
+            "mmd_loss": mmd_loss,
             "latent_constrain_loss": latent_constrain
         }
         return H, R, loss_record
 
-    def calculate_metric(self, X, kl_weight, pred_weight):
+    def calculate_metric(self, X_test, kl_weight, pred_weight, mmd_weight):
         epoch_total_loss = 0
         epoch_reconstruction_loss = 0
         epoch_kldiv_loss = 0
         epoch_prediction_loss = 0
+        epoch_mmd_loss = 0
         b = 0
         with torch.no_grad():
-            for b, X in enumerate(X):
+            for b, X in enumerate(X_test):
                 X = self._dataset[X.cpu().numpy()]
-                batch_index, label_index = None, None
-                if self.n_batch > 0 and self.n_label > 0:
-                    if self.constrain_latent_embedding:
-                        X, P, batch_index, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2), get_k_elements(X,3)
-                    else:
-                        X, batch_index, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2)
-                elif self.n_batch > 0:
-                    if self.constrain_latent_embedding:
-                        X, P, batch_index = get_k_elements(X,0), get_k_elements(X,1),  get_k_elements(X,2)
-                    else:
-                        X, batch_index = get_k_elements(X,0), get_k_elements(X,1)
-                elif self.n_label > 0:
-                    if self.constrain_latent_embedding:
-                        X, P, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2)
-                    else: 
-                        X, label_index = get_k_elements(X,0), get_k_elements(X,1)
+                batch_index, label_index, categorical_covariate_index = None, None, None
+                if self.n_categorical_covariate_ is not None:
+                    if self.n_batch > 0 and self.n_label > 0:
+                        if self.constrain_latent_embedding:
+                            X, P, batch_index, label_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2), get_last_k_elements(X,3), get_k_elements(X,4)
+                        else:
+                            X, batch_index, label_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2), get_last_k_elements(X,3)
+                    elif self.n_batch > 0:
+                        if self.constrain_latent_embedding:
+                            X, P, batch_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1),  get_k_elements(X,2), get_last_k_elements(X,3)
+                        else:
+                            X, batch_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1),  get_last_k_elements(X,2)
+                    elif self.n_label > 0:
+                        if self.constrain_latent_embedding:
+                            X, P, label_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2), get_last_k_elements(X,3)
+                        else: 
+                            X, label_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1), get_last_k_elements(X,2)
+                    categorical_covariate_index = list(np.vstack(categorical_covariate_index).T.astype(int))
+                else:
+                    if self.n_batch > 0 and self.n_label > 0:
+                        if self.constrain_latent_embedding:
+                            X, P, batch_index, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2), get_k_elements(X,3)
+                        else:
+                            X, batch_index, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2)
+                    elif self.n_batch > 0:
+                        if self.constrain_latent_embedding:
+                            X, P, batch_index = get_k_elements(X,0), get_k_elements(X,1),  get_k_elements(X,2)
+                        else:
+                            X, batch_index = get_k_elements(X,0), get_k_elements(X,1)
+                    elif self.n_label > 0:
+                        if self.constrain_latent_embedding:
+                            X, P, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2)
+                        else: 
+                            X, label_index = get_k_elements(X,0), get_k_elements(X,1)
                 
                 X = torch.tensor(np.vstack(list(map(lambda x: x.toarray() if issparse(x) else x, X))))
 
@@ -631,6 +751,12 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
                     if not isinstance(batch_index, torch.FloatTensor):
                         batch_index = batch_index.type(torch.FloatTensor)
                     batch_index = batch_index.to(self.device).unsqueeze(1)  
+                if self.n_categorical_covariate_ is not None:
+                    for i in range(len(categorical_covariate_index)):
+                        categorical_covariate_index[i] = torch.tensor(categorical_covariate_index[i])
+                        if not isinstance(categorical_covariate_index[i], torch.FloatTensor):
+                            categorical_covariate_index[i] = categorical_covariate_index[i].type(torch.FloatTensor)
+                        categorical_covariate_index[i] = categorical_covariate_index[i].to(self.device).unsqueeze(1)
 
                 if not isinstance(X, torch.FloatTensor):
                     X = X.type(torch.FloatTensor)
@@ -639,29 +765,28 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
                 
                 lib_size = X.sum(1).to(self.device) 
 
-                H, R, L = self.forward(X, lib_size, batch_index, label_index)
+                H, R, L = self.forward(X, lib_size, batch_index, label_index, categorical_covariate_index)
 
                 reconstruction_loss = L['reconstruction_loss']
                 prediction_loss = pred_weight * L['prediction_loss'] 
                 kldiv_loss = kl_weight * L['kldiv_loss']    
-                
+                mmd_loss = mmd_weight * L['mmd_loss']
+
                 avg_reconstruction_loss = reconstruction_loss.sum()
                 avg_kldiv_loss = kldiv_loss.sum()
-
+                avg_mmd_loss = mmd_loss.sum()
 
                 epoch_reconstruction_loss += avg_reconstruction_loss.item()
                 epoch_kldiv_loss += avg_kldiv_loss.item()
                 if self.n_label > 0:
                     epoch_prediction_loss += prediction_loss.sum().item() 
-                
-                loss = avg_reconstruction_loss + avg_kldiv_loss + prediction_loss.sum()
-
-        epoch_total_loss =  epoch_reconstruction_loss  + epoch_kldiv_loss 
+                epoch_mmd_loss += avg_mmd_loss.item()
+                epoch_total_loss += (avg_reconstruction_loss + avg_kldiv_loss + avg_mmd_loss).item()
         return {
-            "loss": loss,
             "epoch_reconstruction_loss":  epoch_reconstruction_loss / (b+1),
             "epoch_kldiv_loss": epoch_kldiv_loss / (b+1),
-            "epoch_total_loss": epoch_total_loss / (b+1),
+            "epoch_mmd_loss": epoch_mmd_loss / (b+1),
+            "epoch_total_loss": epoch_total_loss / (b+1),   
         }
 
     
@@ -670,6 +795,8 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
             n_per_batch:int = 128,
             kl_weight: float = 1.,
             pred_weight: float = 1.,
+            mmd_weight: float = 1.,
+            constrain_weight: float = 1.,
             optimizer_parameters: Iterable = None,
             validation_split: float = .2,
             lr: bool = 1e-3,
@@ -683,7 +810,8 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
             random_seed: int = 12,
             subset_indices: Union[torch.tensor, np.ndarray] = None,
             pred_last_n_epoch: int = 10,
-            pred_last_n_epoch_fconly: bool = False
+            pred_last_n_epoch_fconly: bool = False,
+            reconstruction_reduction: str = 'sum',
         ):
         self.train()
         if n_epochs_kl_warmup:
@@ -714,12 +842,20 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         best_score = 0
         current_score = 0
         pbar = tqdm(range(max_epoch), desc="Epoch")
+        loss_record = {
+                "epoch_reconstruction_loss": 0,
+                "epoch_kldiv_loss": 0,
+                "epoch_prediction_loss": 0,
+                "epoch_mmd_loss": 0,
+                "epoch_total_loss": 0
+        }
         for epoch in range(1, max_epoch+1):
             pbar.desc = "Epoch {}".format(epoch)
             epoch_total_loss = 0
             epoch_reconstruction_loss = 0
             epoch_kldiv_loss = 0
             epoch_prediction_loss = 0
+            epoch_mmd_loss = 0
             X_train, X_test = self.as_dataloader(
                 n_per_batch=n_per_batch, 
                 train_test_split = True, 
@@ -736,25 +872,43 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
             for b, X in enumerate(X_train):
                 P = None
                 X = self._dataset[X.cpu().numpy()]
-                batch_index, label_index = None, None
+                batch_index, label_index, categorical_covariate_index = None, None, None
                 if self.n_batch > 0 or self.n_label > 0:
                     if not isinstance(X, Iterable) and len(X) > 1:
                         raise ValueError()
-                    if self.n_batch > 0 and self.n_label > 0:
-                        if self.constrain_latent_embedding:
-                            X, P, batch_index, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2), get_k_elements(X,3)
-                        else:
-                            X, batch_index, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2)
-                    elif self.n_batch > 0:
-                        if self.constrain_latent_embedding:
-                            X, P, batch_index = get_k_elements(X,0), get_k_elements(X,1),  get_k_elements(X,2)
-                        else:
-                            X, batch_index = get_k_elements(X,0), get_k_elements(X,1)
-                    elif self.n_label > 0:
-                        if self.constrain_latent_embedding:
-                            X, P, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2)
-                        else: 
-                            X, label_index = get_k_elements(X,0), get_k_elements(X,1)
+                    if self.n_categorical_covariate_ is not None:
+                        if self.n_batch > 0 and self.n_label > 0:
+                            if self.constrain_latent_embedding:
+                                X, P, batch_index, label_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2), get_last_k_elements(X,3), get_k_elements(X,4)
+                            else:
+                                X, batch_index, label_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2), get_last_k_elements(X,3)
+                        elif self.n_batch > 0:
+                            if self.constrain_latent_embedding:
+                                X, P, batch_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1),  get_k_elements(X,2), get_last_k_elements(X,3)
+                            else:
+                                X, batch_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1),  get_last_k_elements(X,2)
+                        elif self.n_label > 0:
+                            if self.constrain_latent_embedding:
+                                X, P, label_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2), get_last_k_elements(X,3)
+                            else: 
+                                X, label_index, categorical_covariate_index = get_k_elements(X,0), get_k_elements(X,1), get_last_k_elements(X,2)
+                        categorical_covariate_index = list(np.vstack(categorical_covariate_index).T.astype(int))
+                    else:
+                        if self.n_batch > 0 and self.n_label > 0:
+                            if self.constrain_latent_embedding:
+                                X, P, batch_index, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2), get_k_elements(X,3)
+                            else:
+                                X, batch_index, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2)
+                        elif self.n_batch > 0:
+                            if self.constrain_latent_embedding:
+                                X, P, batch_index = get_k_elements(X,0), get_k_elements(X,1),  get_k_elements(X,2)
+                            else:
+                                X, batch_index = get_k_elements(X,0), get_k_elements(X,1)
+                        elif self.n_label > 0:
+                            if self.constrain_latent_embedding:
+                                X, P, label_index = get_k_elements(X,0), get_k_elements(X,1), get_k_elements(X,2)
+                            else: 
+                                X, label_index = get_k_elements(X,0), get_k_elements(X,1)
 
 
                 X = torch.tensor(np.vstack(list(map(lambda x: x.toarray() if issparse(x) else x, X))))
@@ -771,6 +925,12 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
                     if not isinstance(batch_index, torch.FloatTensor):
                         batch_index = batch_index.type(torch.FloatTensor)
                     batch_index = batch_index.to(self.device).unsqueeze(1)
+                if self.n_categorical_covariate_ is not None:
+                    for i in range(len(categorical_covariate_index)):
+                        categorical_covariate_index[i] = torch.tensor(categorical_covariate_index[i])
+                        if not isinstance(categorical_covariate_index[i], torch.FloatTensor):
+                            categorical_covariate_index[i] = categorical_covariate_index[i].type(torch.FloatTensor)
+                        categorical_covariate_index[i] = categorical_covariate_index[i].to(self.device).unsqueeze(1)
 
                 if not isinstance(X, torch.FloatTensor):
                     X = X.type(torch.FloatTensor)
@@ -779,16 +939,16 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
                 
                 lib_size = X.sum(1).to(self.device)
 
-                H, R, L = self.forward(X, lib_size, batch_index, label_index, P)
-                
+                H, R, L = self.forward(X, lib_size, batch_index, label_index, categorical_covariate_index, P, reduction=reconstruction_reduction)
 
                 reconstruction_loss = L['reconstruction_loss']
                 prediction_loss = pred_weight * L['prediction_loss'] 
                 kldiv_loss = kl_weight * L['kldiv_loss']    
+                mmd_loss = mmd_weight * L['mmd_loss']
 
                 avg_reconstruction_loss = reconstruction_loss.sum()  / n_per_batch
                 avg_kldiv_loss = kldiv_loss.sum()  / n_per_batch
-
+                avg_mmd_loss = mmd_loss.sum()  / n_per_batch
 
                 epoch_reconstruction_loss += avg_reconstruction_loss.item()
                 epoch_kldiv_loss += avg_kldiv_loss.item()
@@ -796,26 +956,31 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
                     epoch_prediction_loss += prediction_loss.sum().item()
 
                 if epoch > max_epoch - pred_last_n_epoch:
-                    loss = avg_reconstruction_loss + avg_kldiv_loss + prediction_loss.sum()
+                    loss = avg_reconstruction_loss + avg_kldiv_loss + avg_mmd_loss + prediction_loss.sum()
                 else: 
-                    loss = avg_reconstruction_loss + avg_kldiv_loss
+                    loss = avg_reconstruction_loss + avg_kldiv_loss + avg_mmd_loss
     
                 if self.constrain_latent_embedding:
-                    loss += L['latent_constrain_loss']
+                    loss += constrain_weight * L['latent_constrain_loss']
 
                 epoch_total_loss += loss.item()
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-            
-            loss_record = self.calculate_metric(X_test, kl_weight, pred_weight)
+                pbar.set_postfix({
+                    'reconst': '{:.2e}'.format(loss_record["epoch_reconstruction_loss"]),
+                    'kldiv': '{:.2e}'.format(loss_record["epoch_kldiv_loss"]),
+                    'mmd': '{:.2e}'.format(loss_record["epoch_mmd_loss"]),
+                    'step': f'{b}'
+                })
+            loss_record = self.calculate_metric(X_test, kl_weight, pred_weight, mmd_weight)
             if lr_schedule:
                 scheduler.step(loss_record["epoch_total_loss"])
             pbar.set_postfix({
-                    "loss": '{:.2e}'.format(loss_record["epoch_total_loss"]), 
-                    'reconst': '{:.2e}'.format(loss_record["epoch_reconstruction_loss"]),
-                    'kldiv': '{:.2e}'.format(loss_record["epoch_kldiv_loss"]),
-                })
+                'reconst': '{:.2e}'.format(loss_record["epoch_reconstruction_loss"]),
+                'kldiv': '{:.2e}'.format(loss_record["epoch_kldiv_loss"]),
+                'mmd': '{:.2e}'.format(loss_record["epoch_mmd_loss"]),
+            })
             pbar.update(1)
             if n_epochs_kl_warmup:
                 kl_weight = min( kl_weight + kl_warmup_gradient, kl_weight_max)
@@ -828,8 +993,8 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
 
     
     @torch.no_grad()
-    def get_latent_embedding(self, latent_key: Literal["z", "q_mu"] = "q_mu") -> np.ndarray:
-        X = self.as_dataloader(subset_indices = list(range(len(self._dataset))), shuffle=False)
+    def get_latent_embedding(self, latent_key: Literal["z", "q_mu"] = "q_mu", n_per_batch: int = 128) -> np.ndarray:
+        X = self.as_dataloader(subset_indices = list(range(len(self._dataset))), shuffle=False, n_per_batch=n_per_batch)
         Zs = []
         for x in X:
             x = self._dataset[x.cpu().numpy()]
@@ -896,13 +1061,15 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
 
 
     def to(self, device:str):
-        super(VAEMixin, self).to(device)
+        super(VAE, self).to(device)
         self.device=device 
         return self
 
     def transfer(self, 
         new_adata: sc.AnnData, 
         batch_key: str, 
+        fraction_of_original: Optional[float], 
+        times_of_new: Optional[float]
     ):
         new_batch_category = new_adata.obs[batch_key]
         original_batch_dim = self.batch_hidden_dim
@@ -915,8 +1082,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         
         original_batch_categories = self.batch_category.categories
 
-        self.gex_adata = sc.concat([self.gex_adata, new_adata])
-
+        self.adata = sc.concat([self.adata, new_adata])
         self.initialize_dataset()
         if self.batch_embedding == "onehot":
             self.batch_hidden_dim = self.n_batch
@@ -945,6 +1111,8 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
             dropout_rate=0,
             device=self.device
         )
+
+
         if self.batch_embedding == 'embedding':
             new_embedding = nn.Embedding(self.n_batch + new_n_batch, self.batch_hidden_dim).to(self.device)
             original_category_index = [list(self.batch_category.categories).index(x) for x in original_batch_categories]
@@ -958,247 +1126,3 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         new_weight[:,:(self.n_latent + original_batch_dim)] = original_weight[:,:(self.n_latent + original_batch_dim)]
         self.decoder._fclayer[0].weight = nn.Parameter(new_weight)
         self.to(self.device)
-
-class TCRDeepInsight:
-    def __init__(self,
-        adata: sc.AnnData
-    ):
-        self.gex_adata = adata
-        for i in ['IR_VJ_1_junction_aa',
-            'IR_VDJ_1_junction_aa',
-            'IR_VJ_1_v_call',
-            'IR_VJ_1_j_call',
-            'IR_VDJ_1_v_call',
-            'IR_VDJ_1_j_call'
-        ]:
-            assert(i in self.gex_adata.obs.columns)
-        self.gex_adata.obs['tcr'] = None
-        self.gex_adata.obs.iloc[:, list(self.gex_adata.obs.columns).index("tcr")] = list(map(lambda x: '='.join(x), self.gex_adata.obs.loc[:,TRA_DEFINITION_ORIG + ['individual']].to_numpy()))
-        self.gex_reference = None 
-        self.tcr_reference = None
-
-    def unique_tcr_by_individual(self):
-        assert("individual" in self.gex_adata.obs.columns)
-        self.gex_adata.obs['tcr'] = None
-        self.gex_adata.obs.iloc[:, list(self.gex_adata.obs.columns).index("tcr")]=list(map(lambda x: '='.join(x), self.gex_adata.obs.loc[:,TRAB_DEFINITION_ORIG + ['individual']].to_numpy()))
-        self.gex_adata.obs['index'] = list(range(len(self.gex_adata)))
-        def mapf(i):
-            if len(np.unique(i)) == 1:
-                return i[0]
-            if len(i) == 2:
-                return "Ambiguous"
-            else:
-                c = Counter(i)
-                return sorted(c.items(), key=lambda x: -x[1])[0][0]
-        agg_index = self.gex_adata.obs.groupby("tcr").agg({
-            "index": list,
-            "cell_type": lambda x: mapf(x)
-        })
-        
-        self.tcr_adata = sc.AnnData(
-            obs = pd.DataFrame(
-                list(map(lambda x: x.split("="), agg_index.index)),
-                columns = TRAB_DEFINITION + ['individual']
-            ),
-            obsm={
-                "X_gex": self.aggregated_gex_embedding_by_tcr(agg_index)
-            }
-        )
-        self.tcr_adata.obs['tcr'] = None 
-        self.tcr_adata.obs.iloc[:, list(self.tcr_adata.obs.columns).index("tcr")] = list(map(lambda x: '='.join(x), self.tcr_adata.obs.loc[:,TRAB_DEFINITION + ['individual']].to_numpy()))
-    
-
-    def aggregated_gex_embedding_by_tcr(self, agg_index):
-        all_gex_embedding = []
-        for i in agg_index['index']:
-            all_gex_embedding.append(
-                self.gex_adata.obsm["X_gex"][i].mean(0)
-            )
-        all_gex_embedding = np.vstack(all_gex_embedding)
-        return all_gex_embedding
-         
-    def pretrain_gex_embedding(self, max_epoch=16, lr=1e-4, device='cuda:0', state_dict_save_path: Optional[str] = None):
-        mt("Building VAE model...")
-        sc.pp.highly_variable_genes(self.adata, flavor='seurat_v3', batch_key='sample_name', inplace=False)
-        model = VAEMixin(
-            adata=self.adata[:,self.adata.var['highly_variable']], 
-            batch_key='sample_name',
-            device=device
-        )
-        model.fit(max_epoch=max_epoch, lr=lr)
-        self.vae_model_state_dict = model.state_dict()
-        X_gex = model.get_latent_embedding()
-        self.gex_adata.obsm["X_gex"] = X_gex
-        if state_dict_save_path is not None:
-            torch.save(self.vae_model_state_dict, state_dict_save_path)
-        else:
-            state_dict_save_path = time.ctime().replace(" ","_").replace(":","_") + "_VAE_state_dict.ckpt"
-            mt("saving VAE model weights to..." + state_dict_save_path)
-            torch.save(self.vae_model_state_dict, state_dict_save_path)
-
-        
-    def get_pretrained_gex_embedding(self, 
-        transfer_label: str = 'cell_type_3',
-        reference_proportion: Optional[float] = 0, 
-        query_multiples: Optional[float] = 9.,
-        device: str = 'cpu'
-    ):
-        mt("Loading Reference adata...")
-        reference = sc.read_h5ad(os.path.join(MODULE_PATH, '../data/reference/gex_reference.raw.h5ad'))
-        if reference_proportion > 0:
-            n = int(len(reference) * reference_proportion)
-        elif query_multiples > 0:
-            n = int(len(self.gex_adata) * query_multiples)
-        else: 
-            raise ValueError()
-        reference = random_subset_by_key(reference, 'sample_name', n)
-        mt("Building VAE model...")
-        model = VAEMixin(
-            adata=reference, 
-            batch_key='sample_name',
-            constrain_latent_embedding=True,
-            device=device
-        )
-        mt("Loading VAE model checkpoints...")
-        model.load_state_dict(torch.load(os.path.join(MODULE_PATH, '../data/pretrained_weights/vae_gex_all_cd4_cd8.ckpt'), map_location=device))
-        model.transfer(self.gex_adata[:, reference.var.index], batch_key='sample_name')
-        X_gex = model.get_latent_embedding()
-        self.gex_reference = reference 
-        self.gex_adata.obsm["X_gex"] = X_gex[-len(self.gex_adata):]
-        nn = KNeighborsClassifier(n_neighbors=13)
-        nn.fit(self.gex_reference.obsm["X_gex"], self.gex_reference.obs[transfer_label])
-        self.gex_adata.obs['cell_type'] = nn.predict(self.gex_adata.obsm["X_gex"])
-
-    def get_pretrained_gex_umap(self, **kwargs):
-        if self.gex_reference is not None:
-            z = umap.UMAP(**kwargs).fit_transform(np.vstack([
-                self.gex_reference.obsm["X_gex"],
-                self.gex_adata.obsm["X_gex"]])
-            )
-            self.gex_adata.obsm["X_umap"] = z[-len(self.gex_adata):]
-            self.gex_reference.obsm["X_umap"] = z[:-len(self.gex_adata)]
-        else: 
-            self.gex_adata.obsm["X_umap"] = umap.UMAP(**kwargs).fit_transform(self.gex_adata.obsm["X_gex"])
-
-    def get_pretrained_tcr_embedding(self, device, pca_path=None, use_pca:bool=True):
-        mt("Building BERT model")
-        tcr_model = TRABModelMixin(
-            BertConfig.from_dict(BERT_CONFIG(768)),
-            pooling='trb',
-            pooling_cls_position=1,
-            labels_number=26
-        )
-        tcr_model.to(device)
-        tokenizer = TRABTokenizer(
-            tra_max_length=48,
-            trb_max_length=48,
-        )
-        mt("Loading VAE model checkpoints...")
-        tcr_model.load_state_dict(torch.load(os.path.join(MODULE_PATH, '../data/pretrained_weights/bert_tcr_768.ckpt'), map_location=device))
-
-        mt("Computing TCR Embeddings...")
-        all_embedding = to_embedding_tcr_only_from_pandas_v2(
-            tcr_model, 
-            self.tcr_adata.obs,
-            tokenizer, 
-            device, 
-            mask_tr='tra'
-        )
-        
-        if pca_path is None:
-            pca = load(os.path.join(MODULE_PATH, '../data/pretrained_weights/pca.pkl'))
-            all_embedding_pca = np.array(pca.transform(all_embedding))
-        elif use_pca: 
-            pca = PCA(n_components=64).fit(all_embedding)
-            all_embedding_pca = np.array(pca.transform(all_embedding))
-        else: 
-            all_embedding_pca = all_embedding
-
-        
-        self.tcr_adata.obsm["X_tcr"] = all_embedding
-        self.tcr_adata.obsm["X_tcr_pca"] = all_embedding_pca
-
-    def cluster_tcr_from_reference(self, label_key, gpu=0):
-        mt("Loading TCR References...")
-        self.tcr_reference = sc.read_h5ad(os.path.join(MODULE_PATH, '../data/reference/tcr_reference.h5ad'))
-        all_tcr_gex_embedding_reference = np.hstack([
-            self.tcr_reference.obsm["X_tcr_pca"],
-            6*self.tcr_reference.obsm["X_gex"]
-        ])
-        all_tcr_gex_embedding_query = np.hstack([
-            self.tcr_adata.obsm["X_tcr_pca"],
-            6*self.tcr_adata.obsm["X_gex"]
-        ])
-        all_tcr_gex_embedding = np.vstack([
-            all_tcr_gex_embedding_reference,
-            all_tcr_gex_embedding_query
-        ])
-        df = pd.concat([
-            self.tcr_reference.obs,
-            self.tcr_adata.obs
-        ])
-        result = self.cluster_tcr_by_label(df, all_tcr_gex_embedding, all_tcr_gex_embedding_query, label_key, gpu)
-        return result
-
-    def cluster_tcr_by_label(self, df, all_tcr_gex_embedding, query_tcr_gex_embedding, label_key, gpu=0):
-        kmeans = faiss.Kmeans(
-            all_tcr_gex_embedding.shape[1], 
-            all_tcr_gex_embedding.shape[0], 
-            niter=20, 
-            verbose=True,
-            gpu=gpu
-        )
-        kmeans.train(all_tcr_gex_embedding)
-        D, I = kmeans.index.search(query_tcr_gex_embedding, 40)
-
-        _result = []
-        label_map = dict(zip(range(len(df)), df[label_key]))
-        labels = np.unique(df[label_key])
-        mt("Iterative anchoring...")
-        for i in tqdm.trange(I.shape[0]):
-            label = np.array([label_map[x] for x in I[i]])
-            for j in list(range(1, 41))[::-1]:
-                if len(np.unique(label[:j])) == 1 and label[0] in labels:
-                    d = np.unique(label[:j])[0]
-                    comp = list(range(j,min(40,j+20)))
-                    _result.append( [label[0]] + list( I[i][:j]) + [-1] * (40-j) + [j] + [D[i][1:j].mean(), D[i][comp].mean()])
-                    break
-
-        result = pd.DataFrame(_result)
-        result = result[result.iloc[:,41] > 1]
-        result = result.sort_values(41, ascending=False)
-        result.index = list(range(len(result)))
-        all_indices = list(np.unique(result.iloc[:,1:41].to_numpy()))
-        all_indices.remove(-1)
-        all_indices = set(all_indices)
-        selected_indices = []
-        mt("Remove repetitive clusters...")
-        for i in tqdm.trange(len(result)):
-            if result.iloc[i,1] in all_indices:
-                selected_indices.append(i)
-                all_indices.remove(result.iloc[i,1])
-            for a in result.iloc[i,2:41].to_numpy():
-                if a >= 0 and a in all_indices:
-                    all_indices.remove(a)
-
-        result = result.iloc[selected_indices]
-        result_tcr = result.copy()
-        result_individual = result.copy()
-        for i in list(range(1, 41))[::-1]:result_tcr.iloc[:,i] = result_tcr.iloc[:,i].apply(lambda x: df.iloc[x,:]['tcr'] if x >= 0 else '-')
-        for i in list(range(1, 41))[::-1]:result_individual.iloc[:,i] = result_individual.iloc[:,i].apply(lambda x: df.iloc[x,:]['individual'] if x >= 0 else '-')
-
-        result_tcr['number_of_individuals'] = list(map(lambda x: len(np.unique(list(filter(lambda x: x != '-', x)))), result_individual.iloc[:,1:41].to_numpy()))
-        result_tcr.columns = [label_key] + [f'CDR3ab{x}' for x in range(1,41)] + ['count','mean_distance',  'mean_distance_other', 'number_of_individuals' ]
-        result_individual['number_of_individuals'] = result_tcr['number_of_individuals']
-        result_individual.columns = [label_key] + [f'individual{x}' for x in range(1,41)] + ['count','mean_distance', 'mean_distance_other', 'number_of_individuals']
-
-        result_tcr = result_tcr[result_tcr['mean_distance'] > 1e-3]
-        result_tcr['disease_specificity_score'] = result_tcr['mean_distance_other'] - result_tcr['mean_distance']
-        result_tcr['tcr_similarity_score'] = result_tcr['mean_distance']
-
-        return sc.AnnData(
-            obs=result_tcr,
-            uns={
-                "I": I, "D": D
-            }
-        )

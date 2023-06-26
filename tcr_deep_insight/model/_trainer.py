@@ -1,3 +1,4 @@
+from collections import Counter
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -12,9 +13,40 @@ from pathlib import Path
 
 
 from ._collator import TRABCollator, TRABMutator
+from ..utils._tensor_utils import one_hot
 
+class EarlyStopping():
+    """
+    Early stopping to stop the training when the loss does not improve after
+    certain epochs.
+    """
+    def __init__(self, patience=5, min_delta=0):
+        """
+        :param patience: how many epochs to wait before stopping when loss is
+               not improving
+        :param min_delta: minimum difference between new loss and old loss for
+               new loss to be considered as an improvement
+        """
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+    def __call__(self, val_loss):
+        if self.best_loss == None:
+            self.best_loss = val_loss
+        elif self.best_loss - val_loss > self.min_delta:
+            self.best_loss = val_loss
+            # reset counter if validation loss improves
+            self.counter = 0
+        elif self.best_loss - val_loss < self.min_delta:
+            self.counter += 1
+            print(f"INFO: Early stopping counter {self.counter} of {self.patience}")
+            if self.counter >= self.patience:
+                print('INFO: Early stopping')
+                self.early_stop = True
+                
 class TrainerBase(ABC):
-
     def attach_train_dataset(self, train_dataset: Optional[datasets.Dataset]):
         self.train_dataset = train_dataset
 
@@ -40,26 +72,26 @@ class TrainerMixin(TrainerBase):
         self.attach_train_dataset(train_dataset)
         self.attach_test_dataset(test_dataset)
 
-    def train(
+    def fit(
         self,
         *,
         max_epoch: int,
-        tra_max_length: int = 36,
-        trb_max_length: int = 36,
-        max_train_sequence: int,
+        max_train_sequence: int = 0,
         n_per_batch: int = 10,
-        focus_trb = True,
         shuffle: bool = False,
-        show_progress_bar: bool = False
+        show_progress: bool = False,
+        early_stopping: bool = False
     ):
         """Main training entry point"""
         loss = []
         self.model.train()
+        if early_stopping:
+            early_stopping = EarlyStopping()
+        if max_train_sequence == 0:
+            max_train_sequence = len(self.train_dataset)
         for i in range(1, max_epoch + 1):
-            epoch_total_loss = 0
-            epoch_batch_loss = 0
-            epoch_triplet_loss = 0
-            if show_progress_bar:
+            epoch_total_loss = []
+            if show_progress:
                 pbar = tqdm.tqdm(total=max_train_sequence // n_per_batch)
 
             for j in range(0, max_train_sequence, n_per_batch):
@@ -73,125 +105,234 @@ class TrainerMixin(TrainerBase):
                     self.train_dataset[j:j+n_per_batch]['attention_mask']
                 )
 
+                if 'cdr3_mr_mask' in self.train_dataset.features.keys():
+                    cdr3_mr_mask = np.array(
+                        self.train_dataset[j:j+n_per_batch]['cdr3_mr_mask']
+                    )
+                else:
+                    cdr3_mr_mask = self.train_dataset[j:j+n_per_batch]['attention_mask']
+                    
                 epoch_token_type_ids = torch.tensor(
                     self.train_dataset[j:j+n_per_batch]['token_type_ids'], dtype=torch.int64
                 ).to(self.device)
 
                 epoch_indices_mlm, epoch_attention_mask_mlm = self.collator(
-                    epoch_indices, epoch_attention_mask
+                    epoch_indices, epoch_attention_mask, cdr3_mr_mask
                 )
-
+                # print(tokenizer.convert_ids_to_tokens(torch.tensor(epoch_indices_mlm)))
                 epoch_indices_mlm = epoch_indices_mlm.to(self.device)
                 epoch_attention_mask_mlm = epoch_attention_mask_mlm.to(self.device)
-                epoch_batch_ids = None
-                if 'tcr_batch' in self.train_dataset.features.keys():
-                    epoch_batch_ids = torch.tensor(
-                        self.train_dataset[j:j+n_per_batch]['tcr_batch'], dtype=torch.int64
+                epoch_label_ids = None
+                if 'tcr_label' in self.train_dataset.features.keys():
+                    epoch_label_ids = torch.tensor(
+                        self.train_dataset[j:j+n_per_batch]['tcr_label'], dtype=torch.int64
                     ).to(self.device)
 
 
                 self.optimizer.zero_grad()
                 output = self.model.forward(
-                        input_ids = epoch_indices_mlm,
-                        attention_mask = epoch_attention_mask_mlm,
-                        token_type_ids =  epoch_token_type_ids,
-                        tcr_batch_ids = epoch_batch_ids,
-                        labels = torch.tensor(epoch_indices, 
-                        dtype=torch.int64).to(self.device)
+                    input_ids = epoch_indices_mlm,
+                    attention_mask = epoch_attention_mask_mlm,
+                    token_type_ids =  epoch_token_type_ids,
+                    labels = torch.tensor(epoch_indices, 
+                    dtype=torch.int64).to(self.device)
+                )
+
+                if epoch_label_ids is not None:
+                    prediction_loss = nn.BCEWithLogitsLoss()(
+                        output["prediction_out"], 
+                        one_hot(epoch_label_ids.unsqueeze(1), 4)
                     )
+                else: 
+                    prediction_loss = torch.tensor(0.)
 
-                triplet_loss = torch.tensor(0.).to(self.device)
-
-                if focus_trb:
-                    mutator_tra_for_tra, mutator_trb_for_tra = (
-                        TRABMutator(tra_max_length,trb_max_length,is_full_length=False,mutate_trb_probability=0,max_mutation_aa=1),
-                        TRABMutator(tra_max_length,trb_max_length,is_full_length=False,mutate_trb_probability=1,max_mutation_aa=4)
-                    )
-                    mutator_tra_for_trb, mutator_trb_for_trb = (
-                        TRABMutator(tra_max_length,trb_max_length,is_full_length=False,mutate_trb_probability=0,max_mutation_aa=4),
-                        TRABMutator(tra_max_length,trb_max_length,is_full_length=False,mutate_trb_probability=1,max_mutation_aa=1)
-                    )
-                    criterion = nn.TripletMarginWithDistanceLoss(distance_function=nn.PairwiseDistance(), reduction='none')
-                    # We start metrics learning here for similar motif
-
-
-                    epoch_indices_mt_trb, epoch_attention_mask_mt_trb = mutator_tra_for_trb(
-                        input_ids = epoch_indices,
-                        attention_mask = epoch_attention_mask,
-                    )
-                    epoch_indices_mt_trb, epoch_attention_mask_mt_trb = mutator_trb_for_trb(
-                        input_ids = epoch_indices_mt_trb,
-                        attention_mask = epoch_attention_mask_mt_trb
-                    )
-
-                    epoch_indices_mt_tra, epoch_attention_mask_mt_tra = mutator_tra_for_tra(
-                        input_ids = epoch_indices,  
-                        attention_mask = epoch_attention_mask
-                    )
-                    epoch_indices_mt_tra, epoch_attention_mask_mt_tra = mutator_trb_for_tra(
-                        input_ids = epoch_indices_mt_tra, 
-                        attention_mask = epoch_attention_mask_mt_tra
-                    )
-                    epoch_indices_mt_tra = epoch_indices_mt_tra.to(self.device)
-                    epoch_attention_mask_mt_tra = epoch_attention_mask_mt_tra.to(self.device)         
-
-                    epoch_indices_mt_trb = epoch_indices_mt_trb.to(self.device)
-                    epoch_attention_mask_mt_trb = epoch_attention_mask_mt_trb.to(self.device)
-                    epoch_indices = torch.tensor(epoch_indices).to(self.device)
-                    epoch_attention_mask = torch.tensor(epoch_attention_mask).to(self.device)
-
-                    step = int(np.ceil(epoch_indices_mlm.shape[0]/3))
-
-                    for i in range(3):
-                        stacked_input_ids = torch.vstack([
-                            epoch_indices[i*step:(i+1)*step],
-                            epoch_indices_mt_trb[i*step:(i+1)*step],
-                            epoch_indices_mt_tra[i*step:(i+1)*step],
-                        ])
-                        stacked_attention_mask = torch.vstack([
-                            epoch_attention_mask[i*step:(i+1)*step],
-                            epoch_attention_mask_mt_trb[i*step:(i+1)*step],
-                            epoch_attention_mask_mt_tra[i*step:(i+1)*step],
-                        ])
-
-                        stacked_token_type_ids = epoch_token_type_ids[0].repeat(
-                            stacked_input_ids.shape[0],1
-                        ).to(stacked_input_ids.device)
-
-                        stacked_output = self.model(
-                            input_ids = stacked_input_ids,
-                            attention_mask = stacked_attention_mask,
-                            labels = stacked_input_ids,
-                            token_type_ids = stacked_token_type_ids,
-                        )
-                        stacked_hidden_states = stacked_output["hidden_states"]
-                        curstep = int(stacked_hidden_states.shape[0]/3)
-                        triplet_loss += criterion(
-                            stacked_hidden_states[:curstep], 
-                            stacked_hidden_states[1*curstep:2*curstep],
-                            stacked_hidden_states[2*curstep:3*curstep]
-                        ).mean()
-
-                total_loss = output["output"].loss * self.loss_weight['reconstruction_loss'] + \
-                             output["batch_loss"] + \
-                             triplet_loss * self.loss_weight['triplet_loss']
+                total_loss = output["output"].loss * self.loss_weight['reconstruction_loss'] + prediction_loss
+                
                 self.optimizer.zero_grad()
                 total_loss.backward()
                 self.optimizer.step()
-                epoch_total_loss += total_loss.item()
-                epoch_batch_loss += output["batch_loss"].item() 
-                epoch_triplet_loss += triplet_loss.item()  * self.loss_weight['triplet_loss']
-                if show_progress_bar:
+                epoch_total_loss.append( total_loss.item() )
+
+                if show_progress:
                     pbar.update(1)
+                    pbar.set_postfix({
+                        f'Learning rate': self.optimizer.param_groups[0]['lr'],
+                        f'Loss': np.mean(epoch_total_loss[-4:]),
+                        f'Prediction': prediction_loss.item()
+                    })
+
             if self.scheduler is not None:
-                self.scheduler(epoch_total_loss)
-                self.scheduler.step()
-            if show_progress_bar:
+                self.scheduler.step(np.mean(epoch_total_loss))
+
+            if self.early_stopping is not None:
+                EarlyStopping(np.mean(epoch_total_loss))
+                if EarlyStopping.early_stop:
+                    print("Early stopping at epoch {}".format(i))
+                    break
+            if show_progress:
                 pbar.close()
 
-            print("epoch {} | total loss {:.2e}, triplet loss {:.2e}".format(i, epoch_total_loss, epoch_triplet_loss))
-            loss.append((epoch_total_loss, epoch_batch_loss))
+            print("epoch {} | total loss {:.2e}".format(i, np.mean(epoch_total_loss)))
+            
+            loss.append(np.mean(epoch_total_loss))
         self.model.train(False)
         return loss
 
 
+    def evaluate(
+        self,
+        *,
+        n_per_batch: int = 10,
+        show_progress: bool = False
+    ):
+        """Main training entry point"""
+        self.model.eval()
+        max_train_sequence = len(self.train_dataset)
+        max_test_sequence = len(self.test_dataset)
+
+
+        ### Train
+        if show_progress:
+            pbar = tqdm.tqdm(total=max_train_sequence // n_per_batch)
+        all_train_result = {
+            "aa": [],
+            "aa_pred": [],
+            "aa_gt": [],
+            "av": [],
+            "bv": []
+        }
+        for j in range(0, max_train_sequence, n_per_batch):
+            self.optimizer.zero_grad()
+            epoch_indices = np.array(
+                    self.train_dataset[j:j+n_per_batch]['input_ids']
+            )
+
+            epoch_attention_mask = np.array(
+                    self.train_dataset[j:j+n_per_batch]['attention_mask']
+            )
+
+            if 'cdr3_mr_mask' in self.train_dataset.features.keys():
+                cdr3_mr_mask = np.array(
+                    self.train_dataset[j:j+n_per_batch]['cdr3_mr_mask']
+                )
+            else:
+                cdr3_mr_mask = self.train_dataset[j:j+n_per_batch]['attention_mask']
+                    
+            epoch_token_type_ids = torch.tensor(
+                    self.train_dataset[j:j+n_per_batch]['token_type_ids'], dtype=torch.int64
+            ).to(self.device)
+
+            epoch_indices_mlm, epoch_attention_mask_mlm = self.collator(
+                    epoch_indices, epoch_attention_mask, cdr3_mr_mask
+            )
+            # print(tokenizer.convert_ids_to_tokens(torch.tensor(epoch_indices_mlm)))
+            epoch_indices_mlm = epoch_indices_mlm.to(self.device)
+            epoch_attention_mask_mlm = epoch_attention_mask_mlm.to(self.device)
+            epoch_label_ids = None
+            if 'tcr_label' in self.train_dataset.features.keys():
+                epoch_label_ids = torch.tensor(
+                            self.train_dataset[j:j+n_per_batch]['tcr_label'], dtype=torch.int64
+                ).to(self.device)
+
+
+            self.optimizer.zero_grad()
+            output = self.model.forward(
+                        input_ids = epoch_indices_mlm,
+                        attention_mask = epoch_attention_mask_mlm,
+                        token_type_ids =  epoch_token_type_ids,
+                        # tcr_label_ids = epoch_label_ids,
+                        labels = torch.tensor(epoch_indices, 
+                        dtype=torch.int64).to(self.device)
+            )
+
+            predictions = output['output']['logits'].topk(1)[1].squeeze()
+            evaluate_mask = epoch_indices_mlm == 22
+            ground_truth = torch.tensor(epoch_indices, dtype=torch.int64).to(self.device)
+            evaluate_mask_trav = torch.zeros_like(evaluate_mask, dtype=torch.bool)
+            evaluate_mask_trav[:, 0] = True
+            evaluate_mask_trbv = torch.zeros_like(evaluate_mask, dtype=torch.bool)
+            evaluate_mask_trbv[:, 48] = True
+            evaluate_mask[:, [0, 48]] = False
+            result = (predictions == ground_truth)[evaluate_mask].detach().cpu().numpy()
+            all_train_result['aa'].append(result)
+            all_train_result['aa_pred'].append(predictions[evaluate_mask].detach().cpu().numpy())
+            all_train_result['aa_gt'].append(ground_truth[evaluate_mask].detach().cpu().numpy())
+            result = (predictions == ground_truth)[evaluate_mask_trav].detach().cpu().numpy()
+            all_train_result['av'].append(result)
+            result = (predictions == ground_truth)[evaluate_mask_trbv].detach().cpu().numpy()
+            all_train_result['bv'].append(result)
+            if show_progress:
+                pbar.update(1)
+
+        ### Test
+        if show_progress:
+            pbar = tqdm.tqdm(total=max_test_sequence // n_per_batch)
+        all_test_result = {
+            "aa": [],
+            "av": [],
+            "bv": []
+        }
+        for j in range(0, max_test_sequence, n_per_batch):
+            self.optimizer.zero_grad()
+            epoch_indices = np.array(
+                    self.test_dataset[j:j+n_per_batch]['input_ids']
+            )
+
+            epoch_attention_mask = np.array(
+                    self.test_dataset[j:j+n_per_batch]['attention_mask']
+            )
+
+            if 'cdr3_mr_mask' in self.test_dataset.features.keys():
+                cdr3_mr_mask = np.array(
+                    self.test_dataset[j:j+n_per_batch]['cdr3_mr_mask']
+                )
+            else:
+                cdr3_mr_mask = self.test_dataset[j:j+n_per_batch]['attention_mask']
+                    
+            epoch_token_type_ids = torch.tensor(
+                    self.test_dataset[j:j+n_per_batch]['token_type_ids'], dtype=torch.int64
+            ).to(self.device)
+
+            epoch_indices_mlm, epoch_attention_mask_mlm = self.collator(
+                    epoch_indices, epoch_attention_mask, cdr3_mr_mask
+            )
+            # print(tokenizer.convert_ids_to_tokens(torch.tensor(epoch_indices_mlm)))
+            epoch_indices_mlm = epoch_indices_mlm.to(self.device)
+            epoch_attention_mask_mlm = epoch_attention_mask_mlm.to(self.device)
+            epoch_label_ids = None
+            if 'tcr_label' in self.test_dataset.features.keys():
+                epoch_label_ids = torch.tensor(
+                            self.test_dataset[j:j+n_per_batch]['tcr_label'], dtype=torch.int64
+                ).to(self.device)
+
+
+            self.optimizer.zero_grad()
+            output = self.model.forward(
+                        input_ids = epoch_indices_mlm,
+                        attention_mask = epoch_attention_mask_mlm,
+                        token_type_ids =  epoch_token_type_ids,
+                        # tcr_label_ids = epoch_label_ids,
+                        labels = torch.tensor(epoch_indices, 
+                        dtype=torch.int64).to(self.device)
+            )
+
+            predictions = output['output']['logits'].topk(1)[1].squeeze()
+            evaluate_mask = epoch_indices_mlm == 22
+            ground_truth = torch.tensor(epoch_indices, dtype=torch.int64).to(self.device)
+            evaluate_mask_trav = torch.zeros_like(evaluate_mask, dtype=torch.bool)
+            evaluate_mask_trav[:, 0] = True
+            evaluate_mask_trbv = torch.zeros_like(evaluate_mask, dtype=torch.bool)
+            evaluate_mask_trbv[:, 48] = True
+            evaluate_mask[:, [0, 48]] = False
+            result = (predictions == ground_truth)[evaluate_mask].detach().cpu().numpy()
+            all_test_result['aa'].append(result)
+            result = (predictions == ground_truth)[evaluate_mask_trav].detach().cpu().numpy()
+            all_test_result['av'].append(result)
+            result = (predictions == ground_truth)[evaluate_mask_trbv].detach().cpu().numpy()
+            all_test_result['bv'].append(result)
+            if show_progress:
+                pbar.update(1)
+        
+        if show_progress:
+            pbar.close()
+        return all_train_result, all_test_result

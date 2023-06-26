@@ -1,7 +1,5 @@
 # TCR-DeepInsight
 
-The emergence of single-cell immune profiling technology has led to the production of a large amount of data on single-cell gene expression (GEX) and T cell receptor (TCR), which has great potential for studying TCR biology and identifying effective TCRs. However, one of the major challenges is the lack of a reference atlas that provides easy access to these datasets. On the other hand, the use of TCR engineering in disease immunotherapy is rapidly advancing, and single-cell immune profiling data can be a valuable resource for identifying functional TCRs. Nevertheless, the lack of efficient computational tools to integrate and identify functional TCRs is a significant obstacle in this field.
-
 ## Aims
 
 We have previously developed [huARdb](https://huarc.net/database) and an [updated version (v2)](https://huarc.net/v2/) currently in developing which collects single-cells immune profiling datasets including linked transcriptome and full-length TCR informations. However, one of the main obstacles in using single-cell immune profiling datasets for disease immunotherapy is the absence of a convenient reference atlas to access this information. Despite the growing potential of TCR engineering in this area, there is a significant challenge in identifying functional TCRs due to the lack of efficient computational tools to integrate the data. Nonetheless, these datasets offer a valuable resource to identify such TCRs and further advance TCR-T technology.
@@ -10,7 +8,12 @@ We have previously developed [huARdb](https://huarc.net/database) and an [update
 
 ### Detailed collection of datasets
 
-In 2023.2.16, we make the first release of an integrated datasets containing more than 1,000,000 hcT cells with full length TCR sequence, including the following studies. These processed an integrated data can be found at Figshare: https://figshare.com/collections/huARdb-TCR-Paper/6471289.
+We aims to build the most comprehensive atlas containing matched transcriptome and full-length V(D)J sequence of T and B cells in **Cancer**, **Autoimmune diseases**, and **Infections**. 
+
+
+In 2023, we make the first release of an integrated datasets containing more than 1,000,000 hcT cells with full length TCR sequence, including the following studies. 
+
+
 
 | **Study name**            | **Number of T cells** | **Disease**                                                  |
 | ------------------------- | --------------------- | ------------------------------------------------------------ |
@@ -43,7 +46,7 @@ In 2023.2.16, we make the first release of an integrated datasets containing mor
 | [Yost et al., 2019](https://doi.org/10.1038/s41591-019-0522-3)         | 24560                 | Basal cell carinoma and squamous cell carcinoma              |
 | [Zheng et al., 2020](https://doi.org/10.1038/s41467-020-20019-0)        | 20302                 | Esophagus squamous cell carcinoma                            |
 
-### Study/Dataset being processed for the database
+### Study/Dataset being processed for the database and reference dataset
 
 | **Study name**            | **Number of T cells** | **Disease**                                                  |
 | ------------------------- | --------------------- | ------------------------------------------------------------ |
@@ -56,13 +59,20 @@ In 2023.2.16, we make the first release of an integrated datasets containing mor
 | [Ren et al.]() | TBD | Ovarian Cancer |
 | [Shi et al.]() | TBD | Biliary Cancer | 
 | [Tong et al.](https://doi.org/10.1038/s41467-022-34581-2) | TBD | Breast Cancer |
-
-### Unpublished Datasets
-
-| **Study name**            | **Number of T cells** | **Disease**                                                  |
-| ------------------------- | --------------------- | ------------------------------------------------------------ |
-| TBD | TBD | Systemic lupus erythematosus  |
-| TBD | TBD | Healthy Aged Individuals |
+| [Pai et al., 2023](https://doi.org/10.1016/j.ccell.2023.03.009) | TBD | Multiple solid tumors |
+| [Rahim et al., 2023](https://doi.org/10.1016/j.cell.2023.02.021) | TBD | HNSCC |
+| [Ogino et al., 2022](https://www.jci.org/articles/view/151239) | TBD | Low-grade Glioma |
+| [Suo et al., 2023](10.1038/s41587-023-01734-7) | TBD | Nonsense-mediated decay (NMD)  |
+| [Moon et al., 2023](10.1038/s41467-022-35264-8) | TBD | Rheumatoid arthritis | TBD |
+| [Zeng et al., 2023](10.1016/j.chom.2023.02.001) | TBD | Alcohol-associated liver disease | TBD |
+| [Xiao et al., 2023](https://www.nature.com/articles/s43587-023-00379-0) | TBD | COVID-19 | 
+| [Sonigra et al., 2023](https://insight.jci.org/articles/view/160964) | TBD | Rheumatoid arthritis | 
+| [Jiang et al., 2021](https://insight.jci.org/articles/view/148035) | TBD  | skin lesion erythema migrans |
+| [Buggert et al., 2022](10.1016/j.cell.2020.11.019) | TBD | HIV |
+| [Xu et al., 2023](https://www.nature.com/articles/s41590-022-01367-z) | TBD | COVID-19 |
+| [Ogino et al., 2022](https://www.jci.org/articles/view/151239) | TBD | Low-grade Glioma |
+| [Friedrich et al., 2023](https://doi.org/10.1016/j.ccell.2023.02.008) | TBD | Multiple Myeloma |
+| [Ali et al., 2023](https://rupress.org/jem/article/220/4/e20220729/213819/PD-1-blockade-and-CDK4-6-inhibition-augment) |  TBD | Breast and Ovarian Cancer |
 
 
 ## Introduction to TCR-DeepInsight
@@ -72,54 +82,23 @@ To robustly identify potential disease associated TCRα/β pairs considering bot
 
 <img src="./imgs/TCRDeepInsight.png" alt="TCRDeepInsight" style="zoom:150%;" />
 
-
-
+## Installation
 
 **Hardware requirement for TCR-DeepInsight includes**
 1. RAM: >16Gb for larger dataset
 2. VRAM of CUDA-enabled GPU: >8Gb 
 
 
-Operation System requirements for running TCR-DeepInsight include the installation of Python3 (Python3.8 used for development) and several PyPI packages. You can create a running environment using CONDA
+Operation System requirements for running TCR-DeepInsight include the installation of Python3 (Python3.8 used for development) and several PyPI packages. You can create a running environment using CONDA ([Anaconda](https://www.anaconda.com/download#Downloads) or [Miniconda](https://docs.conda.io/en/main/miniconda.html))
 
 ```shell
-conda create -n tcrdeepinsight python=3.8 -y    
-pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
-pip3 install faiss-gpu transformers==4.17.0 datasets==1.18.4 scikit-learn==0.24.1 scanpy==1.8.1 anndata==0.8.0 matplotlib=3.3.4 einops==0.4.1 biopython==1.79
+conda create -n tcr-deep-insight -f environment.yml
+conda activate tcr-deep-insight
 ```
 
-## Data 
 
-`Cellranger-6.1.2` is used for the processing of raw 10x GEX and TCR sequencing data as described in [Wu et al., 2021](https://academic.oup.com/nar/article/50/D1/D1244/6381136). However, TCR-DeepInsight is compatible with cellranger with version > 3.0.0.
 
-Integration of GEX and TCR data is performed by `scanpy` and `scirpy`. Specifically, TCR-DeepInsight requires cells with full-length TCR and complement information of CDR3α, TRAV, TRAJ, CDR3β, TRBV, and TRBJ.
-
-Example code for integrating and filtering GEX and TCR data:
-
-```python
-import scanpy as sc
-import scirpy as ir
-ir.pp.merge_with_ir(gex_adata, tcr_adata)
-if isinstance(tcr_adata_opt, sc.AnnData):
-    gex_adata.obs['is_cell'] = 'None'
-    gex_adata.obs['high_confidence'] = 'None'
-    tcr_adata_opt.obs['is_cell'] = 'None'
-    tcr_adata_opt.obs['high_confidence'] = 'None'
-    ir.pp.merge_airr_chains(gex_adata, tcr_adata_opt)
-elif isinstance(tcr_adata_opt, Iterable):
-    for i in tcr_adata_opt:
-        gex_adata.obs['is_cell'] = 'None'
-        gex_adata.obs['high_confidence'] = 'None'
-        i.obs['is_cell'] = 'None'
-        i.obs['high_confidence'] = 'None'
-        ir.pp.merge_airr_chains(gex_adata, i)
-ir.tl.chain_qc(gex_adata)
-if self.check_valid_vdj:
-    gex_adata = gex_adata[
-        list(map(lambda x: x in ["single pair", "extra VJ", "extra VDJ"], gex_adata.obs["chain_pairing"]))
-    ].copy()
-```
 
 ## Usage
 
-Please see the [Jupyter Notebook for TCR-DeepInsight](https://huarc.net/notebook/huARdb_TCR_DeepInsight_notebook.html).
+For detailed usage, Please see the [Jupyter Notebook for TCR-DeepInsight](https://huarc.net/notebook/huARdb_TCR_DeepInsight_notebook.html).

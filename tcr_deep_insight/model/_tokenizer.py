@@ -11,13 +11,8 @@ from transformers import (
 )
 
 from ..utils._tcr import (
-    VJ_GENES, 
-    VJ_GENES2INDEX,
-    VJ_GENES2INDEX_REVERSE,
-    TRAV_GENES, 
-    TRAJ_GENES, 
-    TRBV_GENES, 
-    TRBJ_GENES
+    HumanTCRAnnotations,
+    MouseTCRAnnotations
 )
 
 from ..utils._tensor_utils import get_k_elements
@@ -163,6 +158,7 @@ class TRABTokenizer(AminoAcidTokenizer):
         mask_token: Optional[str] = None,
         cls_token: Optional[str] = None,
         sep_token: Optional[str] = None,
+        species: Literal['human', 'mouse'] = 'human',
         **kwargs
     ) -> None:
         # A special token representing an out-of-vocabulary token.
@@ -178,6 +174,13 @@ class TRABTokenizer(AminoAcidTokenizer):
         super(TRABTokenizer, self).__init__(model_max_length = tra_max_length + trb_max_length, **kwargs)
         self.tra_max_length = tra_max_length
         self.trb_max_length = trb_max_length
+        if species == 'human':
+            self.VJ_GENES2INDEX = HumanTCRAnnotations.VJ_GENES2INDEX
+            self.VJ_GENES2INDEX_REVERSE = HumanTCRAnnotations.VJ_GENES2INDEX_REVERSE
+        elif species == 'mouse':
+            self.VJ_GENES2INDEX = MouseTCRAnnotations.VJ_GENES2INDEX
+            self.VJ_GENES2INDEX_REVERSE = MouseTCRAnnotations.VJ_GENES2INDEX_REVERSE
+
 
     def _encode(self, aa: str, v_gene: str = None, j_gene: str = None, max_length: int = None) -> torch.Tensor:
         aa = list(aa)
@@ -191,7 +194,7 @@ class TRABTokenizer(AminoAcidTokenizer):
             aa = [v_gene] + aa + [j_gene]
         if len(aa) < max_length:
             aa += list(self._pad_token * (max_length - len(aa)))
-        return torch.Tensor(list(map(lambda a: _AMINO_ACIDS_INDEX.get(a) if a in _AMINO_ACIDS_INDEX.keys() else VJ_GENES2INDEX.get(a, 0) + len(_AMINO_ACIDS_INDEX), aa)))
+        return torch.Tensor(list(map(lambda a: _AMINO_ACIDS_INDEX.get(a) if a in _AMINO_ACIDS_INDEX.keys() else self.VJ_GENES2INDEX.get(a, 0) + len(_AMINO_ACIDS_INDEX), aa)))
 
     def convert_tokens_to_ids(self, sequence: Union[List[Tuple[str]], Tuple[str]], alpha_vj: Optional[Union[List[Tuple[str]], Tuple[str]]] = None, beta_vj: Optional[Union[List[Tuple[str]], Tuple[str]]] = None):
         # sourcery skip: none-compare, swap-if-else-branches
@@ -225,7 +228,7 @@ class TRABTokenizer(AminoAcidTokenizer):
         return {"indices": ids, "mask": mask, "token_type_ids": token_type_ids}
 
     def _decode(self, ids):
-        return list(map(lambda t: _AMINO_ACIDS_INDEX_REVERSE[t] if t in _AMINO_ACIDS_INDEX_REVERSE.keys() else VJ_GENES2INDEX_REVERSE[t - len(_AMINO_ACIDS_INDEX)], ids))
+        return list(map(lambda t: _AMINO_ACIDS_INDEX_REVERSE[t] if t in _AMINO_ACIDS_INDEX_REVERSE.keys() else self.VJ_GENES2INDEX_REVERSE[t - len(_AMINO_ACIDS_INDEX)], ids))
 
     def _trab_decode(self, ids):
         dec = self._decode(ids)
@@ -238,16 +241,6 @@ class TRABTokenizer(AminoAcidTokenizer):
         else:
             return list(map(lambda x: self._trab_decode(x), ids))
 
-    def check_sequence(self, sequences: Iterable[str]):
-        for i in range(len(sequences)):
-            if len(sequences[i]) < 50:
-                if len(sequences[i]) > 1:
-                    # We intentionally treat the short sequence as CDR3 and place it to 103:
-                    assert(sequences[i][0] == 'C')
-                    sequences[i] = self.pad_token * 103 + sequences[i]
-                else:
-                    sequences[i] = self.pad_token * 126
-
     def to_dataset(
             self, 
             ids: Iterable[str],
@@ -258,16 +251,12 @@ class TRABTokenizer(AminoAcidTokenizer):
             beta_v_genes: Iterable[str] = None,
             beta_j_genes: Iterable[str] = None,
             pairing: Iterable[int] = None,
-            check_full_length_sequence: bool = True,
             split: bool = False
         ) -> datasets.DatasetDict:
         if not len(ids) == len(alpha_chains) == len(beta_chains):
             raise ValueError("Length of ids(%d), alpha_chains(%d) and beta_chains(%d) do not match" % (len(ids), len(alpha_chains), len(beta_chains)))
         alpha_chains = list(alpha_chains)
         beta_chains = list(beta_chains)
-        if check_full_length_sequence:
-            self.check_sequence(alpha_chains)
-            self.check_sequence(beta_chains)
         if all(map(lambda x: x is not None, [alpha_v_genes, alpha_j_genes, beta_v_genes, beta_j_genes])):
             tokenized = self.convert_tokens_to_ids(
                 list(zip(alpha_chains, beta_chains)), 
