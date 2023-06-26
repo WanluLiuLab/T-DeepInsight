@@ -265,14 +265,6 @@ def get_pretrained_gex_umap(gex_adata, gex_reference_adata, **kwargs):
 def pretrain_tcr_embedding(tcr_adata: sc.AnnData):
     pass
 
-@typed({
-    "tcr_adata": sc.AnnData,
-    "bert_config": Mapping[str, Any],
-    "checkpoint_path": str,
-    "pca_path": Optional[str],
-    "use_pca": bool,
-    "device": str
-})
 def get_pretrained_tcr_embedding(
     tcr_adata: sc.AnnData, 
     bert_config: Mapping[str, Any],
