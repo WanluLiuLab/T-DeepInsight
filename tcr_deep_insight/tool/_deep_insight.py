@@ -220,7 +220,7 @@ def get_pretrained_gex_embedding(
     mt("Loading VAE model checkpoints...")
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
 
-    model.transfer(gex_adata[:, reference.var.index], batch_key='sample_name')
+    model.transfer(gex_adata[:, reference.var.index], batch_key='sample_name', times_of_new=9)
     if extra_train_epochs > 0:
         mt("Training VAE model for extra {} epochs...".format(extra_train_epochs))
         model.fit(max_epoch=extra_train_epochs, lr=1e-4)

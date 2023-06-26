@@ -1061,15 +1061,15 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
 
 
     def to(self, device:str):
-        super(VAE, self).to(device)
+        super(VAEMixin, self).to(device)
         self.device=device 
         return self
 
     def transfer(self, 
         new_adata: sc.AnnData, 
         batch_key: str, 
-        fraction_of_original: Optional[float], 
-        times_of_new: Optional[float]
+        fraction_of_original: Optional[float] = None,
+        times_of_new: Optional[float] = None
     ):
         new_batch_category = new_adata.obs[batch_key]
         original_batch_dim = self.batch_hidden_dim
@@ -1082,7 +1082,14 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         
         original_batch_categories = self.batch_category.categories
 
-        self.adata = sc.concat([self.adata, new_adata])
+        if fraction_of_original is not None:
+            old_adata = self.adata[np.random.choice(len(self.adata), int(len(self.adata) * fraction_of_original), replace=False)]
+        elif times_of_new is not None:
+            old_adata = self.adata[np.random.choice(len(self.adata), int(len(new_adata) * times_of_new), replace=True)]
+        else:
+            raise ValueError("Either fraction_of_original or times_of_new must be specified")
+
+        self.adata = sc.concat([old_adata, new_adata])
         self.initialize_dataset()
         if self.batch_embedding == "onehot":
             self.batch_hidden_dim = self.n_batch
