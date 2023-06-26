@@ -13,7 +13,6 @@ data/
 *.tsv
 *.data
 *.pkl
-*.txt
 *.fa
 *.json
 *.pkl
