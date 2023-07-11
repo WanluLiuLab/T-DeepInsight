@@ -6,4 +6,5 @@ root: intro
 chapters:
 - file: huARdb_TCR_paper_notebook.ipynb
 - file: huARdb_TCR_DeepInsight_notebook.ipynb
+- file: huARdb_TCR_DeepInsight_notebook_v2.ipynb
 - file: huARdb_GEX_paper_notebook.ipynb

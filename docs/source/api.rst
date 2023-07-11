@@ -34,6 +34,8 @@ Data
 .. autofunction:: tcr_deep_insight.data.mouse_gex_reference_v1
 .. autofunction:: tcr_deep_insight.data.human_tcr_reference_v1
 .. autofunction:: tcr_deep_insight.data.mouse_tcr_reference_v1
+.. autofunction:: tcr_deep_insight.data.human_gex_reference_v2
+.. autofunction:: tcr_deep_insight.data.human_tcr_reference_v2
 
 Tool
 ----
@@ -41,7 +43,7 @@ Tool
 .. autofunction:: tcr_deep_insight.tl.pretrain_gex_embedding
 .. autofunction:: tcr_deep_insight.tl.get_pretrained_gex_embedding
 .. autofunction:: tcr_deep_insight.tl.get_pretrained_tcr_embedding
-    .. autofunction:: tcr_deep_insight.tl.cluster_tcr
+.. autofunction:: tcr_deep_insight.tl.cluster_tcr
 .. autofunction:: tcr_deep_insight.tl.cluster_tcr_from_reference
 
 
@@ -54,7 +56,17 @@ Model
     :undoc-members:
     :show-inheritance:
 
+.. autoclass:: tcr_deep_insight.model._model.TRABModelMixin
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 .. autoclass:: tcr_deep_insight.model.VAEModel
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. autoclass:: tcr_deep_insight.model._model.VAEModelMixin
     :members:
     :undoc-members:
     :show-inheritance:
@@ -63,8 +75,7 @@ Plotting
 --------
 
 .. autofunction:: tcr_deep_insight.pl.set_plotting_params
-.. autofunction:: tcr_deep_insight.pl.createFig 
-.. autofunction:: tcr_deep_insight.pl.createSubplots
+.. autofunction:: tcr_deep_insight.pl.create_fig
+.. autofunction:: tcr_deep_insight.pl.create_subplots
 .. autofunction:: tcr_deep_insight.pl.plot_cdr3_sequence
-.. autofunction:: tcr_deep_insight.pl.plot_gex_tcr_selected_tcrs
-.. autofunction:: tcr_deep_insight.pl.plot_gex_selected_tcrs
+.. autofunction:: tcr_deep_insight.pl.plot_selected_tcrs

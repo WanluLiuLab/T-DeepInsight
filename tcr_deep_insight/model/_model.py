@@ -213,6 +213,7 @@ class TRABModelMixin(nn.Module):
             "hidden_states": hidden_states,
             "prediction_out": prediction_out,
         }
+    
 class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
     """Vanilla single-cell VAE"""
     def __init__(self, *,
@@ -1068,6 +1069,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
     def transfer(self, 
         new_adata: sc.AnnData, 
         batch_key: str, 
+        concat_with_original: bool = True,
         fraction_of_original: Optional[float] = None,
         times_of_new: Optional[float] = None
     ):
@@ -1089,7 +1091,10 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         else:
             raise ValueError("Either fraction_of_original or times_of_new must be specified")
 
-        self.adata = sc.concat([old_adata, new_adata])
+        if concat_with_original:
+            self.adata = sc.concat([old_adata, new_adata])
+        else:
+            self.adata = new_adata
         self.initialize_dataset()
         if self.batch_embedding == "onehot":
             self.batch_hidden_dim = self.n_batch

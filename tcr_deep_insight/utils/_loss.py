@@ -104,7 +104,8 @@ class LossFunction:
                                  logits:       torch.tensor = None,
                                  mu:           torch.tensor = None,
                                  theta:        torch.tensor = None,
-                                 gate_logits:  torch.tensor = None):
+                                 gate_logits:  torch.tensor = None,
+                                 reduction:    str = "sum"):
         if ((total_counts == None) and (logits == None)):
             if ((mu == None) and (theta == None )):
                 raise ValueError
@@ -121,7 +122,10 @@ class LossFunction:
                 logits=logits, 
                 gate_logits=gate_logits
             )
-        reconst_loss = -znb.log_prob(X).sum(dim = 1)
+        if reduction == "sum":
+            reconst_loss = -znb.log_prob(X).sum(dim = 1)
+        elif reduction == "mean":
+            reconst_loss = -znb.log_prob(X).mean(dim = 1)
         return reconst_loss
 
     @staticmethod

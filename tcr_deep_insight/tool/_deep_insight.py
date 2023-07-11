@@ -369,7 +369,7 @@ def cluster_tcr_from_reference(
     tcr_reference_adata: sc.AnnData,
     label_key: str,  
     gpu=0
-):
+) -> TCRDeepInsightClusterResult:
     """
     Cluster TCRs from reference. 
 
@@ -379,7 +379,7 @@ def cluster_tcr_from_reference(
     :param reference_path: Path to reference TCR data. Default: None
     :param gpu: GPU to use. Default: 0
 
-    :return: sc.AnnData containing clustered TCRs.
+    :return: TCRDeepInsightClusterResult object containing clustered TCRs.
 
     .. note::
         The `gpu` parameter indicates GPU to use for clustering. If `gpu` is 0, CPU is used.
@@ -423,7 +423,7 @@ def _cluster_tcr_by_label(
         query_tcr_gex_embedding, 
         label_key, 
         gpu=0
-):
+) -> TCRDeepInsightClusterResult:
     kmeans = faiss.Kmeans(
         all_tcr_gex_embedding.shape[1],
         all_tcr_gex_embedding.shape[0],
@@ -446,10 +446,14 @@ def _cluster_tcr_by_label(
                 comp = list(range(j,min(40,j+20)))
                 _result.append( [label[0]] + list( I[i][:j]) + [-1] * (40-j) + [j] + [D[i][1:j].mean(), D[i][comp].mean()])
                 break
-
+    
     result = pd.DataFrame(_result)
+    
+    result['cluster_index'] = result.index
+
     result = result[result.iloc[:,41] > 1]
     result = result.sort_values(41, ascending=False)
+
     result.index = list(range(len(result)))
     all_indices = list(np.unique(result.iloc[:,1:41].to_numpy()))
     all_indices.remove(-1)
@@ -465,7 +469,9 @@ def _cluster_tcr_by_label(
                 all_indices.remove(a)
 
     result = result.iloc[selected_indices]
+
     result_tcr = result.copy()
+
     result_individual = result.copy()
     for i in list(range(1, 41))[::-1]:result_tcr.iloc[:,i] = result_tcr.iloc[:,i].apply(lambda x: df.iloc[x,:]['tcr'] if x >= 0 else '-')
     for i in list(range(1, 41))[::-1]:result_individual.iloc[:,i] = result_individual.iloc[:,i].apply(lambda x: df.iloc[x,:]['individual'] if x >= 0 else '-')
@@ -491,15 +497,29 @@ def _cluster_tcr_by_label(
 
 @typed({
     "reference_adata": sc.AnnData,
-    "tcr_cluster": sc.AnnData,
+    "tcr_cluster_adata": sc.AnnData,
     "label_key": str,
     "map_function": Callable
 })
-def inject_tcr_cluster(reference_adata: sc.AnnData, tcr_cluster: sc.AnnData, label_key: str, map_function: Callable = default_aggrf):
-    """For each cluster, inject the label of the most abundant TCR in the cluster"""
-    
+def inject_labels_for_tcr_cluster_adata(
+    reference_adata: sc.AnnData, 
+    tcr_cluster_adata: sc.AnnData, 
+    label_key: str, 
+    map_function: Callable = default_aggrf
+):
+    """
+    Inject labels for tcr_cluster_adata based on reference_adata
+    :param reference_adata: sc.AnnData
+    :param tcr_cluster_adata: sc.AnnData
+    :param label_key: str
+    :param map_function: Callable
+    :return: sc.AnnData
+    """
     # Get a list of lists of TCRs
-    tcr_list = tcr_cluster.obs.loc[:,list(filter(lambda x: x.startswith("TCRab"), tcr_cluster.obs.columns))].to_numpy()
+    if 'tcr' not in reference_adata.obs.columns:
+        raise ValueError("tcr column not found in reference_adata.obs. Please run `tdi.pp.update_anndata` first.")
+    
+    tcr_list = tcr_cluster_adata.obs.loc[:,list(filter(lambda x: x.startswith("TCRab"), tcr_cluster_adata.obs.columns))].to_numpy()
     if "tcr" not in reference_adata.obs.columns:
         raise ValueError("tcr column not found in reference_adata.obs")
     # For each list of TCRs, find the label of the most abundant TCR
@@ -520,5 +540,5 @@ def inject_tcr_cluster(reference_adata: sc.AnnData, tcr_cluster: sc.AnnData, lab
                 list(map(lambda x: tcr2int[x], tcrs)),
             ][label_key])) 
 
-    tcr_cluster.obs[label_key] = labels
+    tcr_cluster_adata.obs[label_key] = labels
     

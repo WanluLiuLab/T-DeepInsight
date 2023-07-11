@@ -1,6 +1,7 @@
 from collections import Counter
-from typing import Optional
+from typing import Any, List, Mapping, Optional, Tuple
 import scanpy as sc
+import matplotlib
 import matplotlib.pyplot as plt 
 import matplotlib as mpl
 from matplotlib.patches import Rectangle
@@ -9,11 +10,14 @@ import logomaker
 import os
 from ..utils._utilities import seqs2mat, mafft_alignment
 from ._palette import godsnot_102
+from ..tool._deep_insight_result import TCRDeepInsightClusterResult
+
 
 from matplotlib.font_manager import FontProperties
 import matplotlib.font_manager as fm
 import warnings
 from pathlib import Path
+
 MODULE_PATH = Path(__file__).parent
 warnings.filterwarnings("ignore")
 
@@ -79,11 +83,12 @@ reference link: http://yulab-smu.top/ggmsa/articles/guides/Color_schemes_And_Fon
 """
 
 
-def createFig(figsize=(8, 4)):
+def create_fig(figsize=(8, 4)) -> Tuple[matplotlib.figure.Figure, plt.Axes] :
     """
     Create a figure with a single axis.
 
     :param figsize: figure size. Default: (8, 4)
+    :return matplotlib.figure.Figure, matplotlib.axes.Axes
     """
     fig,ax=plt.subplots()           
     ax.spines['right'].set_color('none')     
@@ -103,7 +108,9 @@ def createFig(figsize=(8, 4)):
     fig.set_size_inches(figsize)
     return fig,ax
 
-def createSubplots(nrow,ncol, figsize=(8,8),gridspec_kw={}):
+def create_subplots(
+    nrow, ncol, figsize=(8,8),gridspec_kw={}
+) -> Tuple[matplotlib.figure.Figure, np.ndarray]:
     """
     Create a figure with multiple axes.
 
@@ -111,6 +118,7 @@ def createSubplots(nrow,ncol, figsize=(8,8),gridspec_kw={}):
     :param ncol: number of columns
     :param figsize: figure size. Default: (8, 8)
     :param gridspec_kw: gridspec_kw. Default: {}
+    :return matplotlib.figure.Figure, matplotlib.axes.Axes
     """
     fig,axes=plt.subplots(nrow, ncol, gridspec_kw=gridspec_kw)
     for ax in axes.flatten():
@@ -129,18 +137,28 @@ def createSubplots(nrow,ncol, figsize=(8,8),gridspec_kw={}):
 
 
 def piechart(
-    ax, 
-    anno, 
-    cm_dict, 
+    ax: matplotlib.axes.Axes,
+    annotation: Mapping[str, int], 
+    cm_dict: Mapping[str, str],
     radius=1, 
     width=1, 
     setp=False, 
-    show_anno=False
+    show_annotation=False
 ):
+    """
+    Draw a pie chart.
+    :param ax: matplotlib.axes.Axes
+    :param annotation: annotationtation
+    :param cm_dict: color map
+    :param radius: radius
+    :param width: width
+    :param setp: whether to set width and edgecolor
+    :param show_annotation: whether to show annotationtation
+    """
     kw = dict(arrowprops=dict(arrowstyle="-"), zorder=0, va="center")
-    pie, _ = ax.pie(anno.values(),
+    pie, _ = ax.pie(annotation.values(),
                     radius=radius,
-                    colors=[cm_dict[p] for p in anno.keys()],
+                    colors=[cm_dict[p] for p in annotation.keys()],
                     # wedgeprops=dict(width=width, edgecolor='w')
                     )
     if setp:
@@ -154,52 +172,110 @@ def piechart(
         horizontalalignment = {-1: "right", 1: "left"}[int(np.sign(x))]
         connectionstyle = "arc3, rad=0"
         kw["arrowprops"].update({"connectionstyle": connectionstyle})
-        percentage = anno[list(anno.keys())[i]] / sum(list(anno.values()))
-        if show_anno:
-            if anno[list(anno.keys())[i]] / sum(list(anno.values())) > 0.005:
-                ax.annotate(list(anno.keys())[i] + ", " + str(round(percentage * 100, 2)) + "%", xy=(x, y), xytext=(
+        percentage = annotation[list(annotation.keys())[i]] / sum(list(annotation.values()))
+        if show_annotation:
+            if annotation[list(annotation.keys())[i]] / sum(list(annotation.values())) > 0.005:
+                ax.annotationtate(list(annotation.keys())[i] + ", " + str(round(percentage * 100, 2)) + "%", xy=(x, y), xytext=(
                     x*1.2, y*1.2), horizontalalignment=horizontalalignment, size=6, fontweight=100)
     return pie
 
 
-def mafft_alignment(sequences):
-    result = []
-    import sys
-    from Bio.Align.Applications import MafftCommandline
-    import tempfile
-    with tempfile.NamedTemporaryFile() as temp:
-        temp.write('\n'.join(list(map(lambda x: '>seq{}\n'.format(x[0]) + x[1], enumerate(sequences)))).encode())
-        temp.seek(0)
-        mafft_cline = MafftCommandline(input=temp.name)
-        stdout,stderr=mafft_cline()
-    for i,j in enumerate(stdout.split("\n")):
-        if i % 2 != 0:
-            result.append(j.replace("-","."))
-    return result
 
-def plot_cdr3_sequence(sequences, alignment = False):
+def plot_cdr3_sequence(
+    sequences: List[str],
+    alignment: bool = False, 
+    labels: Optional[List[str]] = None,
+    labels_palette: Optional[Mapping[str, Any]] = None,
+    ax: Optional[plt.Axes] = None,
+) -> Tuple[matplotlib.figure.Figure, plt.Axes]:
     """
     Plot CDR3 sequences.
 
     :param sequences: a list of CDR3 sequences
     :param alignment: whether to align the sequences. Default: False
-    
+    :param labels: a list of labels. Default: None
+    :param labels_palette: a dictionary of labels and colors. Default: None
+    :param ax: matplotlib.axes.Axes. Default: None
+
+    :return: matplotlib.figure.Figure, matplotlib.axes.Axes
     """
     if alignment:
         sequences = mafft_alignment(sequences)
-    fig,ax=createFig()
+    if ax is None:
+        fig,ax=create_fig((8, 0.36 * len(sequences)))
+    else: 
+        fig = ax.get_figure()
+    renderer = fig.canvas.get_renderer()
+    default_offset = 0
+    if labels is not None and labels_palette is None:
+        labels_palette = dict(zip(set(labels), godsnot_102))
+    
+    if labels is not None:
+        t = ax.text(x=0,y=0,s=sorted(labels, key=lambda x: len(x))[-1],fontfamily='arial', size=12)
+        if hasattr(t.get_window_extent(renderer=renderer), 'inverse_transformed'):
+            # matplotlib 3.3.0+
+            bb = t.get_window_extent(renderer=renderer).inverse_transformed(ax.transData)
+        else: 
+            # matplotlib < 3.3.0
+            bb = t.get_window_extent(renderer=renderer).transformed(ax.transData.inverted())
+
+        default_offset = bb.width
+        t.remove()
+    max_x = 0
+    max_y = 0.7 * len(sequences) + .9
     for i,s in enumerate(sequences):
+        y = 0.7 * (len(sequences) - i) + .9
         for j,c in enumerate(s):
-            ax.add_patch(Rectangle((1+j*0.2, 0.7*i+.9), 0.2,0.6, facecolor = amino_acids_color_scale[c]))
-        ax.text(x=1.015,y=0.7*i+1,s=s,fontfamily='Droid Sans Mono for Powerline', size=12)
+            ax.add_patch(
+                Rectangle(
+                    (1+j*0.24+default_offset, y), 
+                    0.24, 
+                    0.6, 
+                    facecolor = amino_acids_color_scale[c]
+                )
+            )
+            if 1+(1+j*0.24)+default_offset > max_x:
+                max_x = 1+(1+j*0.24)+default_offset
+            t = ax.text(x=0,y=0,s=c,fontfamily='Droid Sans Mono for Powerline', size=12)
+            if hasattr(t.get_window_extent(renderer=renderer), 'inverse_transformed'):
+                # matplotlib 3.3.0+
+                bb = t.get_window_extent(renderer=renderer).inverse_transformed(ax.transData)
+            else: 
+                # matplotlib < 3.3.0
+                bb = t.get_window_extent(renderer=renderer).transformed(ax.transData.inverted())
+
+            offset = (0.24 - bb.width) / 2
+            t.remove()
+            t = ax.text(
+                x = 1+j*0.24 + offset + default_offset,
+                y= y + .1,
+                s=c,
+                fontfamily='Droid Sans Mono for Powerline', 
+                size=12
+            )
+        if labels is not None:
+            ax.text(
+                x = 0,
+                y = y + .1,
+                s = labels[i],
+                fontfamily='arial', 
+                size=12,
+                color = labels_palette[labels[i]]
+            )
     ax.spines['right'].set_color('none')     
     ax.spines['top'].set_color('none')
     ax.spines['bottom'].set_color('none')     
     ax.spines['left'].set_color('none')
-    ax.set_ybound(0, 0.7*i+1)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    default_x_bound = ax.get_xbound()[1]
+    if max_x > default_x_bound:
+        ax.set_xbound(0, max_x)
+        fig.set_size_inches(8 * (max_x / default_x_bound), 0.36 * len(sequences))
+    ax.set_ybound(0, 0.7*i+2.5)
     return fig, ax 
 
-def plot_gex_selected_tcrs(
+def _plot_gex_selected_tcrs(
     adata,
     tcrs,
     color,
@@ -218,7 +294,7 @@ def plot_gex_selected_tcrs(
     .. note::
         You should have `mafft` installed in your system to use this function
     """
-    fig,ax=createFig()
+    fig,ax=create_fig()
     fig.set_size_inches(3,3)
 
     ax.scatter(
@@ -242,10 +318,11 @@ def plot_gex_selected_tcrs(
         color='red',
     )
 
-def plot_gex_tcr_selected_tcrs(
+def _plot_gex_tcr_selected_tcrs(
     gex_adata: sc.AnnData,
     color: str,
     tcrs: list,
+    other_tcrs: Optional[List[str]] = None,
     palette: Optional[dict] = None
 ):
     """
@@ -274,15 +351,28 @@ def plot_gex_tcr_selected_tcrs(
     plt.rcParams['axes.linewidth'] = 0.5
     plt.rcParams['font.family'] = "Arial"
 
-    gs_kw = dict(width_ratios=[1,1], height_ratios=[6, 1, 1])
-    fig, axes = plt.subplot_mosaic([[0,0],
-                                [3,4],
-                                [1,2]],
-                                gridspec_kw=gs_kw, figsize=(5, 7),
-                                layout="constrained")
+    if other_tcrs is not None:
+        gs_kw = dict(width_ratios=[2,1,1], height_ratios=[1,1,1,1,1])
+        fig, axes = plt.subplot_mosaic(
+            [[0,3,1],[0,4,2],[0,9,7],[0,10,8],[0,5,6]],
+            gridspec_kw=gs_kw, 
+            figsize=(7,3.2),
+            layout="constrained"
+        )
+    else: 
+        gs_kw = dict(width_ratios=[2,1,1], height_ratios=[1,1,1])
+        fig, axes = plt.subplot_mosaic(
+            [[0,3,1],[0,4,2],[0,5,6]],
+            gridspec_kw=gs_kw, 
+            figsize=(7,3.2),
+            layout="constrained"
+        )
 
     logomaker.Logo(seqs2mat(mafft_alignment(list(map(lambda x: x.split("=")[0], tcrs)))), ax=axes[1])
     logomaker.Logo(seqs2mat(mafft_alignment(list(map(lambda x: x.split("=")[1], tcrs)))), ax=axes[2])
+
+
+    obsm = gex_adata.obsm["X_umap"]
 
     axes[0].scatter(
         gex_adata.obsm["X_umap"][:,0],
@@ -291,6 +381,21 @@ def plot_gex_tcr_selected_tcrs(
         color=list(map(lambda x: palette[x], gex_adata.obs[color])),
         linewidths=0,
     )
+
+    
+    if other_tcrs is not None:
+        obsm = gex_adata[
+            np.array(list(map(lambda x: x in other_tcrs, gex_adata.obs['tcr'])))
+        ].obsm["X_umap"]
+
+        axes[0].scatter(
+            obsm[:,0],
+            obsm[:,1],
+            s=10,
+            marker='*',
+            color='grey'
+        )
+
 
     obsm = gex_adata[
             np.array(list(map(lambda x: x in tcrs, gex_adata.obs['tcr'])))
@@ -303,15 +408,15 @@ def plot_gex_tcr_selected_tcrs(
         marker='*',
         color='red'
     )
-
+    
     obs = gex_adata[
-            np.array(list(map(lambda x: x in tcrs, gex_adata.obs['tcr'])))
+        np.array(list(map(lambda x: x in tcrs, gex_adata.obs['tcr'])))
     ].obs
 
     piechart(
         axes[3],
         Counter(obs['TRAV']),
-        show_anno=True,
+        show_annotation=True,
         cm_dict=dict(zip(Counter(obs['TRAV']).keys(), godsnot_102))
     )
 
@@ -319,10 +424,44 @@ def plot_gex_tcr_selected_tcrs(
     piechart(
         axes[4],
         Counter(obs['TRBV']),
-        show_anno=True,
+        show_annotation=True,
         cm_dict=dict(zip(Counter(obs['TRBV']).keys(), godsnot_102))
     )
 
+    axes[1].set_title("CDR3a dTCR")
+    axes[2].set_title("CDR3b dTCR")
+    axes[3].set_title("TRAV dTCR")
+    axes[4].set_title("TRBV dTCR")
+
+    if other_tcrs is not None:
+        logomaker.Logo(seqs2mat(mafft_alignment(list(map(lambda x: x.split("=")[0], other_tcrs)))), ax=axes[7])
+        logomaker.Logo(seqs2mat(mafft_alignment(list(map(lambda x: x.split("=")[1], other_tcrs)))), ax=axes[8])
+
+        obs = gex_adata[
+            np.array(list(map(lambda x: x in other_tcrs, gex_adata.obs['tcr'])))
+        ].obs
+
+        piechart(
+            axes[9],
+            Counter(obs['TRAV']),
+            show_annotation=True,
+            cm_dict=dict(zip(Counter(obs['TRAV']).keys(), godsnot_102))
+        )
+
+
+        piechart(
+            axes[10],
+            Counter(obs['TRBV']),
+            show_annotation=True,
+            cm_dict=dict(zip(Counter(obs['TRBV']).keys(), godsnot_102))
+        )
+
+        axes[7].set_title("CDR3a bTCR")
+        axes[8].set_title("CDR3b bTCR")
+        axes[9].set_title("TRAV bTCR")
+        axes[10].set_title("TRBV bTCR")
+
+    
     for ax in axes.values():
         ax.spines['right'].set_color('none') 
         ax.spines['top'].set_color('none')
@@ -338,7 +477,34 @@ def plot_gex_tcr_selected_tcrs(
             line.set_markeredgewidth(0.5)
             line.set_color("#585958")
 
-    axes[1].set_title("CDR3a")
-    axes[2].set_title("CDR3b")
-    axes[3].set_title("TRAV")
-    axes[4].set_title("TRBV")
+
+def plot_selected_tcrs(
+    tcr_cluster_result: TCRDeepInsightClusterResult,
+    color: str,
+    tcrs: List[str],
+    other_tcrs: List[str],
+    palette: Optional[dict] = None
+):
+    """
+    Plot the tcrs on the umap of the gex data, with the TCRs as a pie chart and logo plot
+
+    :param tcr_cluster_result: TCRDeepInsightClusterResult
+    :param color: str
+    :param tcrs: list
+    :param palette: dict (optional) 
+    :return: fig, ax
+
+    .. note::
+        You should have `mafft` installed in your system to use this function
+    """
+    assert(tcr_cluster_result.gex_adata is not None)
+    _plot_gex_tcr_selected_tcrs(
+        tcr_cluster_result.gex_adata,
+        color,
+        tcrs,
+        other_tcrs,
+        palette
+    )
+
+
+

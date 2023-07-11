@@ -86,7 +86,7 @@ class TrainerMixin(TrainerBase):
         loss = []
         self.model.train()
         if early_stopping:
-            early_stopping = EarlyStopping()
+            early_stopper = EarlyStopping()
         if max_train_sequence == 0:
             max_train_sequence = len(self.train_dataset)
         for i in range(1, max_epoch + 1):
@@ -164,9 +164,9 @@ class TrainerMixin(TrainerBase):
             if self.scheduler is not None:
                 self.scheduler.step(np.mean(epoch_total_loss))
 
-            if self.early_stopping is not None:
-                EarlyStopping(np.mean(epoch_total_loss))
-                if EarlyStopping.early_stop:
+            if early_stopping:
+                early_stopper(np.mean(epoch_total_loss))
+                if early_stopper.early_stop:
                     print("Early stopping at epoch {}".format(i))
                     break
             if show_progress:
@@ -177,6 +177,7 @@ class TrainerMixin(TrainerBase):
             loss.append(np.mean(epoch_total_loss))
         self.model.train(False)
         return loss
+
 
 
     def evaluate(

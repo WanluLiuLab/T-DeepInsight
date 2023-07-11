@@ -13,6 +13,8 @@ from einops import rearrange, repeat
 
 import numpy as np
 
+from functools import partial
+
 from ..utils._loss import LossFunction
 from ..utils._logger import  mt
 from ..utils._definitions import FCDEF
@@ -114,7 +116,10 @@ class FCLayer(nn.Module):
                 raise ValueError("category list contains values less than 1")
             self.n_category = len(n_cat_list)
             self._cat_dim = cat_dim
-            self.cat_dimension = self.n_category * cat_dim # Total dimension of categories using one-hot encoding
+            if cat_embedding == "embedding":
+                self.cat_dimension = self.n_category * cat_dim # Total dimension of categories using embedding
+            else:
+                self.cat_dimension = sum(n_cat_list) # Total dimension of categories using one-hot
             self.n_cat_list = n_cat_list
             if cat_embedding == "embedding":
                 self.cat_embedding = nn.ModuleList(
@@ -122,7 +127,7 @@ class FCLayer(nn.Module):
                 )
             else: 
                 self.cat_embedding = [
-                    lambda x: one_hot(x.unsqueeze(1), n) for n in n_cat_list
+                    partial(one_hot, n_cat=n) for n in n_cat_list
                 ]
 
         else:

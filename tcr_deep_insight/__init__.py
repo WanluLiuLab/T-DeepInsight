@@ -4,7 +4,7 @@ import subprocess
 import warnings
 
 try:
-    subprocess.check_output('mafft --version'.split())
+    subprocess.run('mafft --version'.split(), capture_output=True)
     mafft_is_installed = True
 except:
     mafft_is_installed = False
