@@ -101,54 +101,66 @@ class TCRDeepInsightClusterResult:
         min_individual_number: int = 2,
         min_tcr_similarity_score: Optional[float] = None,
         min_disease_specificity_score: Optional[float] = None,
-        return_other_tcrs: bool = False
+        return_other_tcrs: bool = False,
+        additional_label_key_values: Optional[Dict[str, List[str]]] = None
     ):
-        if rank_by == 'tcr_similarity':
-            return self._get_tcrs_for_cluster_by_tcr_similarity(
-                label, 
-                rank, 
-                min_tcr_number=min_tcr_number, 
-                min_individual_number=min_individual_number,
-                min_tcr_similarity_score = min_tcr_similarity_score,
-                min_disease_specificity_score = min_disease_specificity_score,
-                return_other_tcrs=return_other_tcrs
-            )
-        elif rank_by == 'disease_specificity':
-            return self._get_tcrs_for_cluster_by_disease_specificity(
-                label, 
-                rank, 
-                min_tcr_number=min_tcr_number, 
-                min_individual_number=min_individual_number,
-                min_tcr_similarity_score = min_tcr_similarity_score,
-                min_disease_specificity_score = min_disease_specificity_score,
-                return_other_tcrs=return_other_tcrs
-            )
-        else:
-            raise ValueError('rank_by must be one of "tcr_similarity" or "disease_specificity"')
+        return self._get_tcrs_for_cluster(
+            label, 
+            rank_by,
+            rank, 
+            min_tcr_number=min_tcr_number, 
+            min_individual_number=min_individual_number,
+            min_tcr_similarity_score = min_tcr_similarity_score,
+            min_disease_specificity_score = min_disease_specificity_score,
+            return_other_tcrs=return_other_tcrs,                
+            additional_label_key_values=additional_label_key_values
+        )
         
-    def _get_tcrs_for_cluster_by_tcr_similarity(
+    def _get_tcrs_for_cluster(
         self, 
         label: str, 
+        rank_by: Literal["tcr_similarity", "disease_specificity"] = 'tcr_similarity',
         rank: int = 0,
         min_tcr_number: int = 4,
         min_individual_number: int = 2,
         min_tcr_similarity_score: Optional[float] = None,
         min_disease_specificity_score: Optional[float] = None,
-        return_other_tcrs: bool = False
+        return_other_tcrs: bool = False,
+        additional_label_key_values: Optional[Dict[str, List[str]]] = None
     ):
+        if rank_by not in ['tcr_similarity', 'disease_specificity']:
+            raise ValueError('rank_by must be one of ["tcr_similarity", "disease_specificity"], got {}'.format(rank_by))
+        
         min_tcr_similarity_score = min_tcr_similarity_score if min_tcr_similarity_score is not None else -1
         min_disease_specificity_score = min_disease_specificity_score if min_disease_specificity_score is not None else -1
+        if additional_label_key_values is not None:
+            additional_indices = np.bitwise_and.reduce(
+                [
+                    np.array(self.data.obs[key] == value) for key, value in additional_label_key_values.items()
+                ]
+            )
+        else:
+            additional_indices = np.ones(len(self.data.obs), dtype=bool)
+            
         result_tcr = self.data.obs[
             np.array(self.data.obs[self.cluster_label] == label) & 
             np.array(self.data.obs['count'] >= min_tcr_number) &
             np.array(self.data.obs['number_of_individuals'] >= min_individual_number) &
             np.array(self.data.obs['tcr_similarity_score'] >= min_tcr_similarity_score) &
-            np.array(self.data.obs['disease_specificity_score'] >= min_disease_specificity_score)
+            np.array(self.data.obs['disease_specificity_score'] >= min_disease_specificity_score) &
+            additional_indices
         ]
-        result = result_tcr.sort_values(
-            'tcr_similarity_score', 
-            ascending=False
-        )
+
+        if rank_by == 'tcr_similarity':
+            result = result_tcr.sort_values(
+                'tcr_similarity_score', 
+                ascending=False
+            )
+        elif rank_by == 'disease_specificity':
+            result = result_tcr.sort_values(
+                'disease_specificity_score', 
+                ascending=False
+            )
 
         tcrs = list(filter(lambda x: x != '-', result.iloc[rank,1:41])) 
         cdr3a, cdr3b, trav, traj, trbv, trbj, individual = list(map(
@@ -156,58 +168,6 @@ class TCRDeepInsightClusterResult:
             np.array(list(map(lambda x: x.split("="), tcrs))).T
         ))
 
-        if return_other_tcrs:
-            return {
-                'cluster_index': result['cluster_index'][rank],
-                'tcrs': tcrs,
-                'cdr3a': cdr3a,
-                'cdr3b': cdr3b,
-                'trav': trav,
-                'traj': traj,
-                'trbv': trbv,
-                'trbj': trbj,
-                'individual': individual
-            }, self.get_tcrs_by_cluster_index(result['cluster_index'][rank], len(tcrs))
-        else:
-            return {
-                'cluster_index': result['cluster_index'][rank],
-                'tcrs': tcrs,
-                'cdr3a': cdr3a,
-                'cdr3b': cdr3b,
-                'trav': trav,
-                'traj': traj,
-                'trbv': trbv,
-                'trbj': trbj,
-                'individual': individual
-            }
-    
-    def _get_tcrs_for_cluster_by_disease_specificity(
-        self, 
-        label: str, 
-        rank: int = 0,
-        min_tcr_number: int = 4,
-        min_individual_number: int = 2,
-        min_tcr_similarity_score: Optional[float] = None,
-        min_disease_specificity_score: Optional[float] = None,
-        return_other_tcrs: bool = False
-    ):
-        min_tcr_similarity_score = min_tcr_similarity_score if min_tcr_similarity_score is not None else -1
-        min_disease_specificity_score = min_disease_specificity_score if min_disease_specificity_score is not None else -1
-        result_tcr = self.data.obs[
-            np.array(self.data.obs[self.cluster_label] == label) & 
-            np.array(self.data.obs['count'] >= min_tcr_number) &
-            np.array(self.data.obs['number_of_individuals'] >= min_individual_number) &
-            np.array(self.data.obs['tcr_similarity_score'] >= min_tcr_similarity_score) &
-            np.array(self.data.obs['disease_specificity_score'] >= min_disease_specificity_score)
-        ]
-
-        result = result_tcr.sort_values(
-            'disease_specificity_score', 
-            ascending=False
-        )
-
-        tcrs = list(filter(lambda x: x != '-', result.iloc[rank,1:41])) 
-        cdr3a, cdr3b, trav, traj, trbv, trbj, individual = list(map(list, np.array(list(map(lambda x: x.split("="), tcrs))).T))
         if return_other_tcrs:
             return {
                 'cluster_index': result['cluster_index'][rank],
