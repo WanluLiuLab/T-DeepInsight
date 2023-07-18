@@ -84,6 +84,9 @@ To robustly identify potential disease associated TCRα/β pairs considering bot
 
 ## Installation
 
+The installation of TCR-DeepInsight needs about 5 minutes.
+
+
 **Hardware requirement for TCR-DeepInsight includes**
 1. RAM: >16Gb for larger dataset
 2. VRAM of CUDA-enabled GPU: >8Gb 
@@ -97,8 +100,10 @@ conda activate tcr-deep-insight
 ```
 
 
-
-
 ## Usage
 
-For detailed usage, Please see the [Jupyter Notebook for TCR-DeepInsight](https://huarc.net/notebook/huARdb_TCR_DeepInsight_notebook.html).
+
+For detailed usage, Please see the [Documentation for TCR-DeepInsight](https://tcr-deepinsight.readthedocs.io/en/latest/index.html).
+
+
+The entire process for CD8Mapper will take less than 30 minutes on a dataset of approximately 50,000 cells. Please see [Tutorial for CD8Mapper](https://tcr-deepinsight.readthedocs.io/en/latest/notebooks/huARdb_CD8_Mapper.html) for more details. 
