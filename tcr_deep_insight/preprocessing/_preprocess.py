@@ -587,7 +587,7 @@ def update_anndata(
 
     .. note::
         This method modifies the `gex_adata` inplace. 
-
+        added columns in .obs: `tcr`, `CDR3a`, `CDR3b`, `TRAV`, `TRAJ`, `TRBV`, `TRBJ`
 
     .. note::
         `"tcr"` should be in `gex_adata.obs.columns`.
@@ -655,19 +655,18 @@ def aggregated_gex_embedding_by_tcr(
 
 @typed({
     'gex_adata': sc.AnnData,
-    'label_key': str,
     'additional_label_keys': Iterable[str],
     'map_function': Callable
 })
 def unique_tcr_by_individual(
         gex_adata: sc.AnnData,
-        label_key: str = 'cell_type', 
+        label_key: Optional[str] = None,
         additional_label_keys: Iterable[str] = None,
-        map_function: Callable = default_aggrf
+        aggregate_func: Callable = default_aggrf
     ):
     """
     Unique TCRs by individual and aggregate GEX embedding by TCR. Unique TCR is defined by the combination of TRAV,TRAJ,TRBV,TRBJ,CDR3α,CDR3β and individual. 
-    Also aggregate GEX embedding by TCR.
+    Also aggregate GEX embedding by TCR, and add the aggregated GEX embedding to the tcr_adata.obsm['X_gex'].
 
     :param label_key: Key in adata.obs where TCR type abels are stored. Default: 'cell_type', where 'cell_type' should be included in adata.obs.columns
     :param additional_label_keys: Additional keys in adata.obs where TCR type labels are stored. Default: None
@@ -685,7 +684,7 @@ def unique_tcr_by_individual(
     if label_key is not None:
         agg_index = gex_adata.obs.groupby("tcr").agg({
             "index": list,
-            label_key: map_function
+            label_key: aggregate_func
         })
     else:
         agg_index = gex_adata.obs.groupby("tcr").agg({

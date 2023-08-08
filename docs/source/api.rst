@@ -42,10 +42,15 @@ Tool
 
 .. autofunction:: tcr_deep_insight.tl.pretrain_gex_embedding
 .. autofunction:: tcr_deep_insight.tl.get_pretrained_gex_embedding
+.. autofunction:: tcr_deep_insight.tl.pretrain_tcr_embedding
 .. autofunction:: tcr_deep_insight.tl.get_pretrained_tcr_embedding
 .. autofunction:: tcr_deep_insight.tl.cluster_tcr
 .. autofunction:: tcr_deep_insight.tl.cluster_tcr_from_reference
 
+.. autoclass:: tcr_deep_insight.tl.TCRDeepInsightClusterResult
+    :members:
+    :undoc-members:
+    :show-inheritance:
 
 
 Model
@@ -66,7 +71,7 @@ Model
     :undoc-members:
     :show-inheritance:
 
-.. autoclass:: tcr_deep_insight.model._model.VAEModelMixin
+.. autoclass:: tcr_deep_insight.model._model.VAEMixin
     :members:
     :undoc-members:
     :show-inheritance:

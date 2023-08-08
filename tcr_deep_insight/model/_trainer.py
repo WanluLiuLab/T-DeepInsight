@@ -12,7 +12,7 @@ import numpy as np
 from pathlib import Path
 
 
-from ._collator import TRABCollator, TRABMutator
+from ._collator import TCRabCollator
 from ..utils._tensor_utils import one_hot
 
 class EarlyStopping():
@@ -53,11 +53,11 @@ class TrainerBase(ABC):
     def attach_test_dataset(self, test_dataset: Optional[datasets.Dataset]):
         self.test_dataset = test_dataset
 
-class TrainerMixin(TrainerBase):
+class TCRabTrainer(TrainerBase):
     def __init__(
         self,
         model: Union[PreTrainedModel, nn.Module],
-        collator: TRABCollator,
+        collator: TCRabCollator,
         train_dataset: Optional[datasets.Dataset] = None,
         test_dataset: Optional[datasets.Dataset] = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),

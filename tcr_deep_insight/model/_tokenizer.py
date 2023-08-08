@@ -1,3 +1,4 @@
+import pandas as pd
 import torch
 from torch.nn import functional as F
 from typing import Union, Iterable, List, Tuple, Optional
@@ -147,7 +148,7 @@ class AminoAcidTokenizer(PreTrainedTokenizerBase):
             })
 
 
-class TRABTokenizer(AminoAcidTokenizer):
+class TCRabTokenizer(AminoAcidTokenizer):
     """Tokenizer for TRA and TRB sequence"""
     def __init__(self,
         *,
@@ -171,7 +172,7 @@ class TRABTokenizer(AminoAcidTokenizer):
         kwargs["cls_token"] = cls_token or _AMINO_ACIDS_ADDITIONALS["CLS"]
         kwargs["sep_token"] = sep_token or _AMINO_ACIDS_ADDITIONALS["SEP"]
 
-        super(TRABTokenizer, self).__init__(model_max_length = tra_max_length + trb_max_length, **kwargs)
+        super(TCRabTokenizer, self).__init__(model_max_length = tra_max_length + trb_max_length, **kwargs)
         self.tra_max_length = tra_max_length
         self.trb_max_length = trb_max_length
         if species == 'human':
@@ -242,6 +243,54 @@ class TRABTokenizer(AminoAcidTokenizer):
             return list(map(lambda x: self._trab_decode(x), ids))
 
     def to_dataset(
+        self,
+        df: pd.DataFrame = None, 
+        ids: Iterable[str] = None, 
+        alpha_chains: Iterable[str] = None, 
+        beta_chains: Iterable[str] = None, 
+        alpha_v_genes: Iterable[str] = None,
+        alpha_j_genes: Iterable[str] = None,
+        beta_v_genes: Iterable[str] = None,
+        beta_j_genes: Iterable[str] = None,
+        pairing: Iterable[int] = None,
+        split: bool = False
+    ):
+        if df is not None:
+            ids = df['id']
+            alpha_chains = df['CDR3a']
+            beta_chains = df['CDR3b']
+            if 'TRAV' in df.columns and 'TRAJ' in df.columns and 'TRBV' in df.columns and 'TRBJ' in df.columns:
+                alpha_v_genes = df['TRAV']
+                alpha_j_genes = df['TRAJ']
+                beta_v_genes = df['TRBV']
+                beta_j_genes = df['TRBJ']
+            if 'pairing' in df.columns:
+                pairing = df['pairing']
+            return self._to_dataset(
+                ids, 
+                alpha_chains, 
+                beta_chains, 
+                alpha_v_genes, 
+                alpha_j_genes, 
+                beta_v_genes, 
+                beta_j_genes, 
+                pairing, 
+                split
+            )
+        else:
+            return self._to_dataset(
+                ids, 
+                alpha_chains, 
+                beta_chains, 
+                alpha_v_genes, 
+                alpha_j_genes, 
+                beta_v_genes, 
+                beta_j_genes, 
+                pairing, 
+                split
+            )
+        
+    def _to_dataset(
             self, 
             ids: Iterable[str],
             alpha_chains: Iterable[str], 

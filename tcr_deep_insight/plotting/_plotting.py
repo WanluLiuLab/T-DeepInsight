@@ -186,6 +186,8 @@ def plot_cdr3_sequence(
     alignment: bool = False, 
     labels: Optional[List[str]] = None,
     labels_palette: Optional[Mapping[str, Any]] = None,
+    labels_postfix: Optional[str] = None,
+    labels_postfix_palette: Optional[Mapping[str, Any]] = None,
     ax: Optional[plt.Axes] = None,
 ) -> Tuple[matplotlib.figure.Figure, plt.Axes]:
     """
@@ -207,9 +209,7 @@ def plot_cdr3_sequence(
         fig = ax.get_figure()
     renderer = fig.canvas.get_renderer()
     default_offset = 0
-    if labels is not None and labels_palette is None:
-        labels_palette = dict(zip(set(labels), godsnot_102))
-    
+
     if labels is not None:
         t = ax.text(x=0,y=0,s=sorted(labels, key=lambda x: len(x))[-1],fontfamily='arial', size=12)
         if hasattr(t.get_window_extent(renderer=renderer), 'inverse_transformed'):
@@ -260,8 +260,19 @@ def plot_cdr3_sequence(
                 s = labels[i],
                 fontfamily='arial', 
                 size=12,
-                color = labels_palette[labels[i]]
+                color = labels_palette[labels[i]] if labels_palette is not None else 'black'
             )
+
+        if labels_postfix is not None:
+            ax.text(
+                x = max_x + 0.1,
+                y = y + .1,
+                s = labels_postfix[i],
+                fontfamily='arial', 
+                size=12,
+                color = labels_postfix_palette[labels_postfix[i]] if labels_postfix_palette is not None else 'black'
+            )
+
     ax.spines['right'].set_color('none')     
     ax.spines['top'].set_color('none')
     ax.spines['bottom'].set_color('none')     
@@ -269,6 +280,7 @@ def plot_cdr3_sequence(
     ax.set_xticks([])
     ax.set_yticks([])
     default_x_bound = ax.get_xbound()[1]
+    max_x += 5
     if max_x > default_x_bound:
         ax.set_xbound(0, max_x)
         fig.set_size_inches(8 * (max_x / default_x_bound), 0.36 * len(sequences))
@@ -322,7 +334,7 @@ def _plot_gex_tcr_selected_tcrs(
     gex_adata: sc.AnnData,
     color: str,
     tcrs: list,
-    other_tcrs: Optional[List[str]] = None,
+    tcrs_background: Optional[List[str]] = None,
     palette: Optional[dict] = None
 ):
     """
@@ -351,13 +363,13 @@ def _plot_gex_tcr_selected_tcrs(
     plt.rcParams['axes.linewidth'] = 0.5
     plt.rcParams['font.family'] = "Arial"
 
-    if other_tcrs is not None:
+    if tcrs_background is not None:
         gs_kw = dict(width_ratios=[2,1,1], height_ratios=[1,1,1,1,1])
         fig, axes = plt.subplot_mosaic(
             [[0,3,1],[0,4,2],[0,9,7],[0,10,8],[0,5,6]],
             gridspec_kw=gs_kw, 
             figsize=(7,3.2),
-            layout="constrained"
+            #layout="constrained"
         )
     else: 
         gs_kw = dict(width_ratios=[2,1,1], height_ratios=[1,1,1])
@@ -365,7 +377,7 @@ def _plot_gex_tcr_selected_tcrs(
             [[0,3,1],[0,4,2],[0,5,6]],
             gridspec_kw=gs_kw, 
             figsize=(7,3.2),
-            layout="constrained"
+            #layout="constrained"
         )
 
     logomaker.Logo(seqs2mat(mafft_alignment(list(map(lambda x: x.split("=")[0], tcrs)))), ax=axes[1])
@@ -383,9 +395,9 @@ def _plot_gex_tcr_selected_tcrs(
     )
 
     
-    if other_tcrs is not None:
+    if tcrs_background is not None:
         obsm = gex_adata[
-            np.array(list(map(lambda x: x in other_tcrs, gex_adata.obs['tcr'])))
+            np.array(list(map(lambda x: x in tcrs_background, gex_adata.obs['tcr'])))
         ].obsm["X_umap"]
 
         axes[0].scatter(
@@ -433,12 +445,12 @@ def _plot_gex_tcr_selected_tcrs(
     axes[3].set_title("TRAV dTCR")
     axes[4].set_title("TRBV dTCR")
 
-    if other_tcrs is not None:
-        logomaker.Logo(seqs2mat(mafft_alignment(list(map(lambda x: x.split("=")[0], other_tcrs)))), ax=axes[7])
-        logomaker.Logo(seqs2mat(mafft_alignment(list(map(lambda x: x.split("=")[1], other_tcrs)))), ax=axes[8])
+    if tcrs_background is not None:
+        logomaker.Logo(seqs2mat(mafft_alignment(list(map(lambda x: x.split("=")[0], tcrs_background)))), ax=axes[7])
+        logomaker.Logo(seqs2mat(mafft_alignment(list(map(lambda x: x.split("=")[1], tcrs_background)))), ax=axes[8])
 
         obs = gex_adata[
-            np.array(list(map(lambda x: x in other_tcrs, gex_adata.obs['tcr'])))
+            np.array(list(map(lambda x: x in tcrs_background, gex_adata.obs['tcr'])))
         ].obs
 
         piechart(
@@ -482,7 +494,7 @@ def plot_selected_tcrs(
     tcr_cluster_result: TCRDeepInsightClusterResult,
     color: str,
     tcrs: List[str],
-    other_tcrs: List[str],
+    tcrs_background: List[str],
     palette: Optional[dict] = None
 ):
     """
@@ -502,7 +514,7 @@ def plot_selected_tcrs(
         tcr_cluster_result.gex_adata,
         color,
         tcrs,
-        other_tcrs,
+        tcrs_background,
         palette
     )
 

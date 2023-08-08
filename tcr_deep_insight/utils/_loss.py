@@ -10,6 +10,7 @@ from torch.autograd import Variable
 
 from ._logger import *
 from ._distributions import *
+from .._compat import *
 
 # Reference: https://github.com/tim-learn/ATDOC/blob/main/loss.py
 class MMD(nn.Module):
@@ -147,7 +148,24 @@ class LossFunction:
         reconst_loss = -nb.log_prob(X).sum(dim = 1)
         return reconst_loss
 
-    
+    @staticmethod 
+    def zi_gaussian_reconstruction_loss(
+        X,
+        mean,
+        variance,
+        gate_logits,
+        reduction: Literal['sum','mean'] = 'sum'
+    ):
+        zg = ZeroInflatedGaussian(
+            mean=mean,
+            variance=variance,
+            gate_logits=gate_logits
+        )   
+        if reduction == "sum":
+            reconst_loss = -zg.log_prob(X).sum(dim = 1)
+        elif reduction == "mean":
+            reconst_loss = -zg.log_prob(X).mean(dim = 1)
+        return reconst_loss 
 
     @staticmethod
     def kld(q: torch.tensor,

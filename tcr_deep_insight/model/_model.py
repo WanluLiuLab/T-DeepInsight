@@ -41,7 +41,7 @@ import warnings
 
 # Package
 from ._primitives import *
-from ._tokenizer import TRABTokenizer
+from ._tokenizer import TCRabTokenizer
 from ._config import get_config
 
 from ..utils._tensor_utils import one_hot, get_k_elements, get_last_k_elements
@@ -49,7 +49,7 @@ from ..utils._decorators import typed
 from ..utils._loss import LossFunction
 from ..utils._logger import mt
 
-from ..utils._utilities import random_subset_by_key
+from ..utils._utilities import random_subset_by_key, euclidean
 from ..utils._compat import Literal
 from ..utils._definitions import (
     TRA_DEFINITION_ORIG,
@@ -60,6 +60,12 @@ from ..utils._definitions import (
     TRB_DEFINITION,
 )
 from ..utils._logger import mt
+from ..utils._umap import (
+    umap_is_installed, 
+    cuml_is_installed,
+    get_default_umap_reducer,
+    get_default_cuml_reducer
+)
 
 MODULE_PATH = Path(__file__).parent
 warnings.filterwarnings("ignore")
@@ -82,6 +88,12 @@ class TRABModelMixin(nn.Module):
         :param hidden_layers: Hidden layers of the classifier
         :param labels_number: Number of labels
 
+        :example:
+            >>> from tcr_deep_insight as tdi
+            >>> model = tdi.model.TCRabModel(
+            >>>    tdi.model.config.get_human_config(),
+            >>>    labels_number=4
+            >>> )
         """
         super(TRABModelMixin, self).__init__()
         self.model = BertForMaskedLM(bert_config)
@@ -233,9 +245,12 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
        use_layer_norm: bool = False,
        batch_hidden_dim: int = 8,
        batch_embedding: Literal["embedding", "onehot"] = "onehot",
+       reconstruction_method: Literal['mse', 'zg', 'zinb'] = 'zinb',
        constrain_latent_method: Literal['mse', 'normal'] = 'mse',
        constrain_latent_embedding: bool = False,
+       constrain_latent_key: str = 'X_gex',
        encode_libsize: bool = False,
+       decode_libsize: bool = True,
        dropout_rate: float = 0.1,
        activation_fn: nn.Module = nn.ReLU,
        inject_batch: bool = True,
@@ -246,20 +261,43 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
        device: Union[str, torch.device] = "cpu"
     ) -> None:
         """
-        @brief VAE                    Variational Autoencoder for a Raw Gene Expression Matrix
-        
-        @param adata                  sc.AnnData object as input dataset
-        @param hidden_stacks          List of number of nodes in each autencoder layer. The size of last element is 
-                                      the dimension of the hidden distribution
-        @param n_batch
-        @param dispersion
+        :param adata: AnnData. If provided, initialize the model with the adata.
+        :param hidden_stacks: List[int]. Number of hidden units in each layer. Default: [128] (one hidden layer with 128 units)
+        :param n_latent: int. Number of latent dimensions. Default: 10
+        :param n_batch: int. Number of batch. Default: 0
+        :param n_label: int. Number of label. Default: 0
+        :param n_categorical_covariate: Optional[Iterable[int]]. Number of categorical covariate. Default: None
+        :param batch_key: str. Batch key in adata.obs. Default: None
+        :param label_key: str. Label key in adata.obs. Default: None
+        :param categorical_covariate_keys: Optional[Iterable[str]]. Categorical covariate keys in adata.obs. Default: None
+        :param dispersion: Literal["gene", "gene-batch", "gene-cell"]. Dispersion method. Default: "gene-cell"
+        :param log_variational: bool. If True, log the variational distribution. Default: True
+        :param bias: bool. If True, use bias in the linear layer. Default: True
+        :param use_batch_norm: bool. If True, use batch normalization. Default: True
+        :param use_layer_norm: bool. If True, use layer normalization. Default: False
+        :param batch_hidden_dim: int. Number of hidden units in the batch embedding layer. Default: 8
+        :param batch_embedding: Literal["embedding", "onehot"]. Batch embedding method. Default: "onehot"
+        :param constrain_latent_method: Literal['mse', 'normal']. Method to constrain the latent embedding. Default: 'mse'
+        :param constrain_latent_embedding: bool. If True, constrain the latent embedding. Default: False
+        :param constrain_latent_key: str. Key to the data to constrain the latent embedding. Default: 'X_gex'
+        :param encode_libsize: bool. If True, encode the library size. Default: False
+        :param dropout_rate: float. Dropout rate. Default: 0.1
+        :param activation_fn: nn.Module. Activation function. Default: nn.ReLU
+        :param inject_batch: bool. If True, inject batch information. Default: True
+        :param inject_label: bool. If True, inject label information. Default: False
+        :param inject_categorical_covariate: bool. If True, inject categorical covariate information. Default: True
+        :param use_attention: bool. If True, use attention. Default: False
+        :param mmd_key: Optional[Literal['batch','label']]. If provided, use MMD loss. Default: None
+        :param device: Union[str, torch.device]. Device to use. Default: "cpu"
 
-        @param bias, 
-               dropout_rate, 
-               use_batch_norm, 
-               use_layer_norm, 
-               activation_fn          parameters for the linear autoencoders
-        @param device                 device to be used for the VAE model. Default is CUDA
+        :example:
+            >>> from tcr_deep_insight as tdi
+            >>> model = tdi.model.VAEModel(
+            >>>    adata,
+            >>>    batch_key = 'batch',
+            >>>    label_key = 'cell_type',
+            >>>    categorical_covariate_keys = ['sample'],
+            >>> )
         """
 
         super(VAEMixin, self).__init__()
@@ -284,8 +322,10 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         self.new_adata_code = None
         self.log_variational = log_variational
         self.mmd_key = mmd_key
+        self.reconstruction_method = reconstruction_method
         self.constrain_latent_embedding = constrain_latent_embedding
         self.constrain_latent_method = constrain_latent_method
+        self.constrain_latent_key = constrain_latent_key
         self.device=device
 
         self.initialize_dataset()
@@ -298,6 +338,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         self.inject_label = inject_label
         self.inject_categorical_covariate = inject_categorical_covariate
         self.encode_libsize = encode_libsize
+        self.decode_libsize = decode_libsize
         self.dispersion = dispersion
         self.use_attention = use_attention
 
@@ -398,6 +439,8 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
                 nn.Linear(self.n_latent, self.n_label),
             )
 
+        self._trained = False 
+
         self.to(device)
 
     def initialize_dataset(self):
@@ -470,8 +513,8 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
             categorical_covariate_categories = [np.array(x.codes) for x in self.categorical_covariate_category]
 
 
-        if self.constrain_latent_embedding and "X_pca" in self.adata.obsm.keys():
-            P = self.adata.obsm["X_pca"]
+        if self.constrain_latent_embedding and self.constrain_latent_key in self.adata.obsm.keys():
+            P = self.adata.obsm[self.constrain_latent_key]
             if categorical_covariate_categories is not None:
                 if batch_categories is not None and label_categories is not None:
                     _dataset = list(zip(X, P, batch_categories, label_categories, *categorical_covariate_categories))
@@ -599,8 +642,9 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
             h = rearrange(self.att(h), 'n d z -> n (d z)')
 
         px_rna_scale = self.px_rna_scale_decoder(px) 
-        px_rna_scale = px_rna_scale * lib_size.unsqueeze(1) 
-
+        if self.decode_libsize:
+            px_rna_scale = px_rna_scale * lib_size.unsqueeze(1) 
+        
         if self.dispersion == "gene-cell":
             px_rna_rate = self.px_rna_rate_decoder(px) ## In logits 
         elif self.dispersion == "gene-batch":
@@ -638,17 +682,29 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         prediction_loss = torch.tensor(0.)
 
         R = self.decode(H, lib_size, batch_index, label_index, categorical_covariate_index)
-   
-        
-        reconstruction_loss = LossFunction.zinb_reconstruction_loss(
-            X,
-            mu = R['px_rna_scale'],
-            theta = R['px_rna_rate'].exp(), 
-            gate_logits = R['px_rna_dropout'],
-            reduction = reduction
-        )
 
-
+        if self.reconstruction_method == 'zinb':
+            reconstruction_loss = LossFunction.zinb_reconstruction_loss(
+                X,
+                mu = R['px_rna_scale'],
+                theta = R['px_rna_rate'].exp(), 
+                gate_logits = R['px_rna_dropout'],
+                reduction = reduction
+            )
+        elif self.reconstruction_method == 'zg':
+            reconstruction_loss = LossFunction.zi_gaussian_reconstruction_loss(
+                X,
+                mean=R['px_rna_scale'],
+                variance=R['px_rna_rate'].exp(),
+                gate_logits=R['px_rna_dropout'],
+                reduction=reduction
+            )
+        elif self.reconstruction_method == 'mse':
+            reconstruction_loss = nn.functional.mse_loss(
+                X,
+                R['px_rna_scale'],
+                reduction=reduction
+            )
 
         if self.n_label > 0:
             criterion = nn.CrossEntropyLoss(weight=self.label_category_weight)
@@ -775,13 +831,14 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
 
                 avg_reconstruction_loss = reconstruction_loss.sum()
                 avg_kldiv_loss = kldiv_loss.sum()
-                avg_mmd_loss = mmd_loss.sum()
+                avg_mmd_loss = mmd_loss
 
                 epoch_reconstruction_loss += avg_reconstruction_loss.item()
                 epoch_kldiv_loss += avg_kldiv_loss.item()
                 if self.n_label > 0:
                     epoch_prediction_loss += prediction_loss.sum().item() 
-                epoch_mmd_loss += avg_mmd_loss.item()
+
+                epoch_mmd_loss += avg_mmd_loss
                 epoch_total_loss += (avg_reconstruction_loss + avg_kldiv_loss + avg_mmd_loss).item()
         return {
             "epoch_reconstruction_loss":  epoch_reconstruction_loss / (b+1),
@@ -851,6 +908,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
                 "epoch_total_loss": 0
         }
         for epoch in range(1, max_epoch+1):
+            self._trained = True
             pbar.desc = "Epoch {}".format(epoch)
             epoch_total_loss = 0
             epoch_reconstruction_loss = 0
@@ -869,7 +927,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
                 self.gene_only_state_dict = deepcopy(self.state_dict())
                 if  pred_last_n_epoch_fconly:
                     optimizer = optim.AdamW(chain(self.att.parameters(), self.fc.parameters()), lr, weight_decay=weight_decay)
-
+            
             for b, X in enumerate(X_train):
                 P = None
                 X = self._dataset[X.cpu().numpy()]
@@ -949,7 +1007,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
 
                 avg_reconstruction_loss = reconstruction_loss.sum()  / n_per_batch
                 avg_kldiv_loss = kldiv_loss.sum()  / n_per_batch
-                avg_mmd_loss = mmd_loss.sum()  / n_per_batch
+                avg_mmd_loss = mmd_loss / n_per_batch
 
                 epoch_reconstruction_loss += avg_reconstruction_loss.item()
                 epoch_kldiv_loss += avg_kldiv_loss.item()
@@ -972,7 +1030,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
                     'reconst': '{:.2e}'.format(loss_record["epoch_reconstruction_loss"]),
                     'kldiv': '{:.2e}'.format(loss_record["epoch_kldiv_loss"]),
                     'mmd': '{:.2e}'.format(loss_record["epoch_mmd_loss"]),
-                    'step': f'{b}'
+                    'step': f'{b} / {len(X_train)}'
                 })
             loss_record = self.calculate_metric(X_test, kl_weight, pred_weight, mmd_weight)
             if lr_schedule:
@@ -1085,28 +1143,52 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         original_batch_categories = self.batch_category.categories
 
         if fraction_of_original is not None:
-            old_adata = self.adata[np.random.choice(len(self.adata), int(len(self.adata) * fraction_of_original), replace=False)]
+            old_adata = random_subset_by_key(
+                self.adata, 
+                key = batch_key, 
+                n = int(len(self.adata) * fraction_of_original)
+            )
         elif times_of_new is not None:
-            old_adata = self.adata[np.random.choice(len(self.adata), int(len(new_adata) * times_of_new), replace=True)]
+            old_adata = random_subset_by_key(
+                self.adata, 
+                key = batch_key, 
+                n = int(len(new_adata) * times_of_new)
+            )
         else:
-            raise ValueError("Either fraction_of_original or times_of_new must be specified")
+            old_adata = self.adata
+
+        old_adata.obs['_transfer_label'] = 'reference'
+        new_adata.obs['_transfer_label'] = 'query'
 
         if concat_with_original:
             self.adata = sc.concat([old_adata, new_adata])
         else:
             self.adata = new_adata
+        
         self.initialize_dataset()
+
         if self.batch_embedding == "onehot":
             self.batch_hidden_dim = self.n_batch
-            
-        if self.n_label > 0 and self.inject_batch and self.inject_label:
-            decoder_n_cat_list = [self.n_batch + new_n_batch, self.n_label]
-        elif self.inject_batch:
-            decoder_n_cat_list = [self.n_batch]
-        elif self.n_label > 0 and self.inject_label:
-            decoder_n_cat_list = [self.n_label]
+        
+        if self.n_categorical_covariate_ is not None and self.inject_categorical_covariate:
+            if self.n_batch > 0 and self.n_label > 0 and self.inject_batch and self.inject_label:
+                decoder_n_cat_list = [self.n_batch, self.n_label, *self.n_categorical_covariate]
+            elif self.n_batch > 0 and self.inject_batch:
+                decoder_n_cat_list = [self.n_batch, *self.n_categorical_covariate]
+            elif self.n_label > 0 and self.inject_label:
+                decoder_n_cat_list = [self.n_label, *self.n_categorical_covariate]
+            else:
+                decoder_n_cat_list = None
         else:
-            decoder_n_cat_list = None
+            if self.n_batch > 0 and self.n_label > 0 and self.inject_batch and self.inject_label:
+                decoder_n_cat_list = [self.n_batch, self.n_label]
+            elif self.n_batch > 0 and self.inject_batch:
+                decoder_n_cat_list = [self.n_batch]
+            elif self.n_label > 0 and self.inject_label:
+                decoder_n_cat_list = [self.n_label]
+            else:
+                decoder_n_cat_list = None
+        
         
         self.decoder_n_cat_list = decoder_n_cat_list
         
@@ -1138,3 +1220,72 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         new_weight[:,:(self.n_latent + original_batch_dim)] = original_weight[:,:(self.n_latent + original_batch_dim)]
         self.decoder._fclayer[0].weight = nn.Parameter(new_weight)
         self.to(self.device)
+
+    def transfer_umap(self, reference_adata: sc.AnnData, use_cuml: bool = False):
+        """
+        Transfer umap embedding from reference_adata to self.adata
+
+        :param reference_adata: sc.AnnData
+        """
+
+        s = set(reference_adata.obs.index)
+        s = list(filter(lambda x: x in s, self.adata.obs.index))
+        self.adata.obsm["X_umap"] = np.zeros((len(self.adata), 2))
+        ss = set(s)
+        indices = list(map(lambda x: x in ss, self.adata.obs.index))
+        self.adata.obsm["X_umap"][indices] = reference_adata[s].obsm["X_umap"]
+
+
+        if 'X_gex' not in self.adata.obsm.keys():
+            mt("X_gex is not found in model.adata.obsm. Calculating latent embedding")
+            Z = self.get_latent_embedding()
+            self.adata.obsm["X_gex"] = Z 
+            mt("latent embedding calculation finished")
+
+        x = self.adata.obsm["X_umap"][indices]
+        mt("Fitting reference UMAP")
+        if use_cuml:
+            raise NotImplementedError()
+        else:
+            reducer = get_default_umap_reducer(
+                init = x,
+                target_metric = 'euclidean', 
+                n_epochs = 10
+            )
+
+        reducer.fit(self.adata.obsm["X_gex"][indices], y=x)
+        Z = self.adata.obsm["X_gex"]
+        mt("Transforming UMAP")
+        self.adata.obsm["X_umap"] = reducer.transform(Z)
+        
+
+    def transfer_label(self, reference_adata: sc.AnnData, label_key: str, method: Literal['knn'] = 'knn', **method_kwargs):
+        """
+        Transfer label from reference_adata to self.adata
+
+        :param reference_adata: sc.AnnData
+        :param label_key: str
+        """
+        s = set(reference_adata.obs.index)
+        s = list(filter(lambda x: x in s, self.adata.obs.index))
+
+        self.adata.obs[label_key] = np.nan
+        ss = set(s)
+        indices = list(map(lambda x: x in ss, self.adata.obs.index))
+        self.adata.obs[label_key][indices] = reference_adata[s].obs[label_key]
+
+        if 'X_gex' not in self.adata.obsm.keys():
+            Z = self.get_latent_embedding()
+            self.adata.obsm["X_gex"] = Z
+
+        if method == 'knn':
+            from sklearn.neighbors import KNeighborsClassifier
+            knn = KNeighborsClassifier(**method_kwargs)
+            knn.fit(
+                self.adata.obsm["X_gex"][indices], self.adata.obs.loc[indices, label_key]
+            )
+            self.adata.obs.loc[self.adata.obs['_transfer_label'] == 'query', label_key] = knn.predict(
+                self.adata.obsm["X_gex"][self.adata.obs['_transfer_label'] == 'query']
+            )
+        else:
+            raise NotImplementedError()

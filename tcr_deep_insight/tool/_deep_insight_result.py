@@ -9,7 +9,7 @@ class TCRDeepInsightClusterResult:
     def __init__(
         self,
         _data: sc.AnnData,
-        _tcr_adata: sc.AnnData,
+        _tcr_adata: sc.AnnData = None,
         _gex_adata: Optional[sc.AnnData] = None,
         _cluster_label: Optional[str] = None,
     ):
@@ -47,8 +47,18 @@ class TCRDeepInsightClusterResult:
     def gex_adata(self, gex_adata: sc.AnnData):
         self._gex_adata = gex_adata
 
+    def __repr__(self) -> str:
+        return 'TCRDeepInsightClusterResult object containing {} clusters'.format(len(self.data.shape[0]))
+    
     
     def save_to_disk(self, save_path, save_tcr_data=True, save_gex_data=True):
+        """
+        Save the cluster result to disk
+
+        :param save_path: the path to save the cluster result
+        :param save_tcr_data: whether to save the tcr data
+        :param save_gex_data: whether to save the gex data
+        """
         if not os.path.exists(save_path):
             os.mkdir(save_path)
         self._data.write_h5ad(os.path.join(save_path, 'cluster_data.h5ad'))
@@ -67,6 +77,11 @@ class TCRDeepInsightClusterResult:
         tcr_data_path: Optional[str] = None,
         gex_adata_path: Optional[str] = None
     ):
+        """
+        Load the cluster result from disk
+
+        :param save_path: the path to load the cluster result
+        """
         data = sc.read_h5ad(os.path.join(save_path, 'cluster_data.h5ad'))
         if tcr_data_path is not None:
             print('Loading tcr data from {}'.format(tcr_data_path))
@@ -101,9 +116,25 @@ class TCRDeepInsightClusterResult:
         min_individual_number: int = 2,
         min_tcr_similarity_score: Optional[float] = None,
         min_disease_specificity_score: Optional[float] = None,
-        return_other_tcrs: bool = False,
+        return_background_tcrs: bool = False,
         additional_label_key_values: Optional[Dict[str, List[str]]] = None
     ):
+        """
+        Get the tcrs for a specific cluster
+
+        :param label: the cluster label
+        :param rank: the rank of the tcrs to return
+        :param rank_by: the metric to rank the tcrs
+        :param min_tcr_number: the minimum number of unique tcrs in the cluster
+        :param min_individual_number: the minimum number of individuals in the cluster
+        :param min_tcr_similarity_score: the minimum tcr similarity score
+        :param min_disease_specificity_score: the minimum disease specificity score
+        :param return_background_tcrs: whether to return other tcrs in the cluster
+        :param additional_label_key_values: additional label key values to filter the cluster
+
+        :return: a dictionary containing the tcrs and their metadata
+
+        """
         return self._get_tcrs_for_cluster(
             label, 
             rank_by,
@@ -112,7 +143,7 @@ class TCRDeepInsightClusterResult:
             min_individual_number=min_individual_number,
             min_tcr_similarity_score = min_tcr_similarity_score,
             min_disease_specificity_score = min_disease_specificity_score,
-            return_other_tcrs=return_other_tcrs,                
+            return_background_tcrs=return_background_tcrs,                
             additional_label_key_values=additional_label_key_values
         )
         
@@ -125,7 +156,7 @@ class TCRDeepInsightClusterResult:
         min_individual_number: int = 2,
         min_tcr_similarity_score: Optional[float] = None,
         min_disease_specificity_score: Optional[float] = None,
-        return_other_tcrs: bool = False,
+        return_background_tcrs: bool = False,
         additional_label_key_values: Optional[Dict[str, List[str]]] = None
     ):
         if rank_by not in ['tcr_similarity', 'disease_specificity']:
@@ -168,7 +199,7 @@ class TCRDeepInsightClusterResult:
             np.array(list(map(lambda x: x.split("="), tcrs))).T
         ))
 
-        if return_other_tcrs:
+        if return_background_tcrs:
             return {
                 'cluster_index': result['cluster_index'][rank],
                 'tcrs': tcrs,
@@ -194,6 +225,13 @@ class TCRDeepInsightClusterResult:
             }
     
     def get_tcrs_gex_embedding_coordinates(self, use_rep: str = 'X_umap') -> Dict[str, np.ndarray]:
+        """
+        Get the gex embedding coordinates for each tcr
+
+        :param use_rep: the representation to use. Default: 'X_umap'
+
+        :return: a dictionary containing the gex embedding coordinates for each tcr
+        """
         result_tcr = self.data.obs
         coordinates = {}
         import tqdm
@@ -211,6 +249,12 @@ class TCRDeepInsightClusterResult:
         cluster_index: int,
         _n_after: int = 0
     ) -> List[str]:
+        """
+        Get the tcrs for a specific cluster
+
+        :param cluster_index: the cluster index
+        :param _n_after: the number of tcrs to skip
+        """
         _result = self.tcr_adata.obs.iloc[
             self.data.uns['I'][int(cluster_index)]
         ]

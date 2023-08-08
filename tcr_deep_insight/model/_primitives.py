@@ -7,6 +7,7 @@ from typing import Union, Mapping, Iterable, List, Optional
 from torch.distributions import Normal
 from torch.utils.data import DataLoader
 from torch import nn, einsum
+import warnings
 
 from einops.layers.torch import Rearrange, Reduce
 from einops import rearrange, repeat
@@ -113,9 +114,10 @@ class FCLayer(nn.Module):
         if n_cat_list is not None:
             # Categories
             if not all(map(lambda x: x > 1, n_cat_list)):
-                raise ValueError("category list contains values less than 1")
+                warnings.warn("category list contains values less than 1")
             self.n_category = len(n_cat_list)
             self._cat_dim = cat_dim
+            self._cat_embedding = cat_embedding
             if cat_embedding == "embedding":
                 self.cat_dimension = self.n_category * cat_dim # Total dimension of categories using embedding
             else:
@@ -162,14 +164,19 @@ class FCLayer(nn.Module):
 
                 for i, (n_cat, cat) in enumerate(zip(self.n_cat_list, cat_list)):
                     assert(n_cat > 1)
-                    category_embedding.append(self.cat_embedding[i](cat))
+                    if self._cat_embedding == "embedding":
+                        category_embedding.append(self.cat_embedding[i](cat))
+                    else: 
+                        category_embedding.append(self.cat_embedding[i](cat.unsqueeze(0).T))
             else:
                 if X.shape[1] != self.in_dim + self.n_category:
-                    raise ValueError("Dimension of X should be equal to {} + {} if cat_list is provided".format(self.in_dim, self.n_category))
+                    raise ValueError("Dimension of X should be equal to {} + {} but found {} if cat_list is provided".format(self.in_dim, self.n_category, X.shape[1]))
                 cat_list = X[:, -self.n_category:].type(torch.LongTensor).T.to(self.device)
                 for i, (n_cat, cat) in enumerate(zip(self.n_cat_list, cat_list)):
-                    assert(n_cat > 1)
-                    category_embedding.append(self.cat_embedding[i](cat))
+                    if self._cat_embedding == "embedding":
+                        category_embedding.append(self.cat_embedding[i](cat))
+                    else: 
+                        category_embedding.append(self.cat_embedding[i](cat.unsqueeze(0).T))
                
             category_embedding = torch.hstack(category_embedding).to(self.device)
             return self._fclayer(torch.hstack([X[:,:self.in_dim], category_embedding]))

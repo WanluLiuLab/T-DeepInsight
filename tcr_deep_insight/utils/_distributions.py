@@ -8,6 +8,34 @@ from torch.distributions.utils import (
 )
 from torch.nn.functional import softplus
 from torch.distributions.distribution import Distribution
+from scipy.stats import f
+import numpy as np
+
+def multivariate_gaussian_p_value(X, Y):
+    # Step 1: Compute the mean vectors for X and Y
+    mean_X = np.mean(X, axis=0)
+    mean_Y = np.mean(Y, axis=0)
+
+    # Step 2: Compute the covariance matrices for X and Y (use unbiased estimator)
+    cov_X = np.cov(X, rowvar=False, bias=False)
+    cov_Y = np.cov(Y, rowvar=False, bias=False)
+
+    # Step 3: Compute the sample sizes of X and Y
+    n_X = X.shape[0]
+    n_Y = Y.shape[0]
+
+    # Step 4: Compute the Hotelling's T-square test statistic
+    t_square = (n_X * n_Y) / (n_X + n_Y) * np.dot(np.dot((mean_X - mean_Y), np.linalg.inv((cov_X / n_X) + (cov_Y / n_Y))), (mean_X - mean_Y))
+
+    # Step 5: Calculate the degrees of freedom for the F-distribution
+    df1 = X.shape[1]  # Number of dimensions
+    df2 = n_X + n_Y - df1 - 1
+
+    # Step 6: Calculate the p-value using the cumulative distribution function (CDF) of the F-distribution
+    p_value = 1.0 - f.cdf(t_square, df1, df2)
+
+    return p_value
+
 
 # Pyro Distributions.utils
 def broadcast_shape(*shapes, **kwargs):

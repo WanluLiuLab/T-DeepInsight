@@ -9,7 +9,18 @@ import torch
 import torch.nn.functional as F
 from collections import Counter
 import scanpy as sc
+import numba
 from ._logger import Colors
+
+@numba.njit(fastmath=True)
+def euclidean(x, y, mask=False):
+    if mask and (np.sum(x) == 0. or np.sum(y) == 0):
+        return 0.
+    result = 0.0
+    for i in range(x.shape[0]):
+        result += (x[i] - y[i]) ** 2
+    return np.sqrt(result)
+
 
 def multi_values_dict(keys, values):
     ret = {}
@@ -52,9 +63,13 @@ def random_subset_by_key(adata, key, n):
     adatas = []
     for k,v in ns:
         view = adata[adata.obs[key] == k]
-        adatas.append(
-            view[np.random.choice(list(range(len(view))), v, replace=False)]
-        )
+        view_subset = view[np.random.choice(list(range(len(view))), v, replace=False)]
+        if view_subset.shape[0] > 0:
+            adatas.append(view_subset)
+        else:
+            adatas.append(
+                view[:1]
+            )
     return sc.concat(adatas)
 
 

@@ -1,7 +1,7 @@
 from typing import Literal
 import torch 
-from ._tokenizer import TRABTokenizer as TCRabTokenizer
-from ._collator import TRABCollator as TCRabCollator
+from ._tokenizer import TCRabTokenizer as TCRabTokenizer
+from ._collator import TCRabCollator as TCRabCollator
 
 def default_optimizer(model, *args, **kwargs):
     optimizer = torch.optim.AdamW(model.parameters(), *args, **kwargs), 

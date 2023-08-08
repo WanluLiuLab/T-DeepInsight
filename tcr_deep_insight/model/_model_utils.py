@@ -6,15 +6,15 @@ import numpy as np
 import pandas as pd
 
 from ._model import TRABModelMixin
-from ._tokenizer import TRABTokenizer
+from ._tokenizer import TCRabTokenizer
 from ..utils._decorators import typed
 from ..utils._compat import Literal
 
 @typed({
     "adata": sc.AnnData,
-    "tokenizer": TRABTokenizer
+    "tokenizer": TCRabTokenizer
 })
-def tcr_adata_to_datasets(adata: sc.AnnData, tokenizer: TRABTokenizer) -> datasets.arrow_dataset.Dataset :
+def tcr_adata_to_datasets(adata: sc.AnnData, tokenizer: TCRabTokenizer) -> datasets.arrow_dataset.Dataset :
     """
     Convert adata to tcr datasets
     :param adata: AnnData
@@ -37,11 +37,11 @@ def tcr_adata_to_datasets(adata: sc.AnnData, tokenizer: TRABTokenizer) -> datase
 
 @typed({
     "df": pd.DataFrame,
-    "tokenizer": TRABTokenizer
+    "tokenizer": TCRabTokenizer
 })
 def tcr_dataframe_to_datasets(
     df: pd.DataFrame,
-    tokenizer: TRABTokenizer
+    tokenizer: TCRabTokenizer
 ) -> datasets.arrow_dataset.Dataset :
     """
     Convert dataframe to tcr datasets
@@ -71,17 +71,20 @@ def to_embedding_tcr_only(
     device: str = 'cuda', 
     n_per_batch: int = 64, 
     progress: bool = False, 
-    mask_tr: Literal['tra','trb','none'] = 'none'
+    mask_tr: Literal['tra','trb','none'] = 'none',
+    mask_region: Literal['v+cdr3','cdr3'] = 'cdr3'
 ):
     """
     Get embedding from model
-    :param model: model
-    :param eval_dataset: eval_dataset
-    :param k: k
-    :param device: device
-    :param n_per_batch: n_per_batch
-    :param progress: progress
-    :param mask_tr: mask_tr
+    :param model: nn.Module, TRABModelMixin. The TCR model.
+    :param eval_dataset: datasets.arrow_dataset.Dataset. evaluation datasets.
+    :param k: str. 'hidden_states' or 'last_hidden_state'. 
+    :param device: str. 'cuda' or 'cpu'. If 'cuda', use GPU. If 'cpu', use CPU.
+    :param n_per_batch: int. Number of samples per batch.
+    :param progress: bool. If True, show progress bar.
+    :param mask_tr: str. 'tra' or 'trb' or 'none'. If 'tra', mask the alpha chain. If 'trb', mask the beta chain. If 'none', do not mask.
+    :param mask_region: str, mask_region. 'v' or 'cdr3'. If 'v', mask the v region and the cdr3 region. If 'cdr3', mask the cdr3 region only.
+
     :return: embedding
     """
     
@@ -103,10 +106,21 @@ def to_embedding_tcr_only(
             indices_length = int(tcr_attention_mask.shape[0]/2)
             if mask_tr == 'tra':
                 # tcr_input_ids[:,2:indices_length] = _AMINO_ACIDS_INDEX[_AMINO_ACIDS_ADDITIONALS['MASK']]
-                tcr_attention_mask[:,2:indices_length] = False
+                if mask_region == 'v+cdr3':
+                    tcr_attention_mask[:,1:indices_length] = False
+                elif mask_region == 'cdr3':
+                    tcr_attention_mask[:,2:indices_length] = False
+                else:
+                    raise ValueError(f"mask_region must be 'v+cdr3' or 'cdr3'")
             elif mask_tr == 'trb':
                 # tcr_input_ids[:,indices_length+2:indices_length*2] = _AMINO_ACIDS_INDEX[_AMINO_ACIDS_ADDITIONALS['MASK']]
-                tcr_attention_mask[:,indices_length+2:indices_length*2] = False
+                if mask_region == 'v+cdr3':
+                    tcr_attention_mask[:,indices_length+1:indices_length*2] = False
+                elif mask_region == 'cdr3':
+                    tcr_attention_mask[:,indices_length+2:indices_length*2] = False
+                else:
+                    raise ValueError(f"mask_region must be 'v+cdr3' or 'cdr3'")
+                
             tcr_token_type_ids = torch.tensor(
                 eval_dataset[j:j+n_per_batch]['token_type_ids'] if 'token_type_ids' in eval_dataset.features.keys() else  eval_dataset[j:j+n_per_batch]['tcr_token_type_ids']
             ).to(device)
