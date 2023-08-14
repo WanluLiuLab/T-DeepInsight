@@ -16,7 +16,6 @@ Contents
 
    intro
    preprocessing
-   notebooks/huARdb_TCR_DeepInsight_notebook
    notebooks/huARdb_TCR_DeepInsight_notebook_v2
    notebooks/huARdb_CD8_Mapper
    api

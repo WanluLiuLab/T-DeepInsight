@@ -175,7 +175,7 @@ def piechart(
         percentage = annotation[list(annotation.keys())[i]] / sum(list(annotation.values()))
         if show_annotation:
             if annotation[list(annotation.keys())[i]] / sum(list(annotation.values())) > 0.005:
-                ax.annotationtate(list(annotation.keys())[i] + ", " + str(round(percentage * 100, 2)) + "%", xy=(x, y), xytext=(
+                ax.annotate(list(annotation.keys())[i] + ", " + str(round(percentage * 100, 2)) + "%", xy=(x, y), xytext=(
                     x*1.2, y*1.2), horizontalalignment=horizontalalignment, size=6, fontweight=100)
     return pie
 
@@ -356,7 +356,8 @@ def _plot_gex_tcr_selected_tcrs(
             palette = sc.pl.palettes.default_28
         else:
             palette = sc.pl.palettes.default_102
-            
+    
+        palette = dict(zip(set(gex_adata.obs[color]), palette))
     plt.rcParams['figure.dpi'] = 300
     plt.rcParams['savefig.dpi'] = 300
     plt.rcParams['font.size'] = 14
@@ -392,6 +393,7 @@ def _plot_gex_tcr_selected_tcrs(
         s=0.5,
         color=list(map(lambda x: palette[x], gex_adata.obs[color])),
         linewidths=0,
+        alpha=0.2,
     )
 
     
@@ -404,7 +406,6 @@ def _plot_gex_tcr_selected_tcrs(
             obsm[:,0],
             obsm[:,1],
             s=10,
-            marker='*',
             color='grey'
         )
 
@@ -417,7 +418,6 @@ def _plot_gex_tcr_selected_tcrs(
         obsm[:,0],
         obsm[:,1],
         s=10,
-        marker='*',
         color='red'
     )
     
@@ -440,10 +440,10 @@ def _plot_gex_tcr_selected_tcrs(
         cm_dict=dict(zip(Counter(obs['TRBV']).keys(), godsnot_102))
     )
 
-    axes[1].set_title("CDR3a dTCR")
-    axes[2].set_title("CDR3b dTCR")
-    axes[3].set_title("TRAV dTCR")
-    axes[4].set_title("TRBV dTCR")
+    axes[1].set_title("CDR3a dTCR", fontdict={'fontsize': 6})
+    axes[2].set_title("CDR3b dTCR", fontdict={'fontsize': 6})
+    axes[3].set_title("TRAV dTCR", fontdict={'fontsize': 6})
+    axes[4].set_title("TRBV dTCR", fontdict={'fontsize': 6})
 
     if tcrs_background is not None:
         logomaker.Logo(seqs2mat(mafft_alignment(list(map(lambda x: x.split("=")[0], tcrs_background)))), ax=axes[7])
@@ -468,15 +468,17 @@ def _plot_gex_tcr_selected_tcrs(
             cm_dict=dict(zip(Counter(obs['TRBV']).keys(), godsnot_102))
         )
 
-        axes[7].set_title("CDR3a bTCR")
-        axes[8].set_title("CDR3b bTCR")
-        axes[9].set_title("TRAV bTCR")
-        axes[10].set_title("TRBV bTCR")
+        axes[7].set_title("CDR3a bTCR", fontdict={'fontsize': 6})
+        axes[8].set_title("CDR3b bTCR", fontdict={'fontsize': 6})
+        axes[9].set_title("TRAV bTCR", fontdict={'fontsize': 6})
+        axes[10].set_title("TRBV bTCR", fontdict={'fontsize': 6})
 
     
     for ax in axes.values():
         ax.spines['right'].set_color('none') 
         ax.spines['top'].set_color('none')
+        ax.spines['bottom'].set_color('none')
+        ax.spines['left'].set_color('none')
         ax.set_xticks([])
         ax.set_yticks([])
 

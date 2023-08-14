@@ -557,7 +557,10 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         _shuffle_indices = list(range(len(_dataset)))
         np.random.shuffle(_shuffle_indices)
         self._dataset = np.array([_dataset[i] for i in _shuffle_indices])
-        self._shuffle_indices = [x for x, _ in sorted(zip(range(len(_dataset)), _shuffle_indices), key=lambda x: x[1])]
+        self._shuffle_indices = np.array(
+            [x for x, _ in sorted(zip(range(len(_dataset)), _shuffle_indices), key=lambda x: x[1])]
+        )
+        self._shuffled_indices_inverse = _shuffle_indices
 
 
     def as_dataloader(
