@@ -10,16 +10,58 @@ import torch.nn.functional as F
 from collections import Counter
 import scanpy as sc
 import numba
+from umap.distances import euclidean
+import warnings
 from ._logger import Colors
+from ._parallelizer import Parallelizer
 
-@numba.njit(fastmath=True)
-def euclidean(x, y, mask=False):
-    if mask and (np.sum(x) == 0. or np.sum(y) == 0):
-        return 0.
-    result = 0.0
-    for i in range(x.shape[0]):
-        result += (x[i] - y[i]) ** 2
-    return np.sqrt(result)
+
+def FLATTEN(x): 
+    return [i for s in x for i in s]
+
+
+def _nearest_neighbor_eucliean_distances(
+    X,
+    queue
+):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        np.warnings.filterwarnings('ignore', category=np.VisibleDeprecationWarning)    
+        out = []
+        for d in X:
+            x1, x2 = d
+            if queue is not None:
+                queue.put(None)
+            ret = []
+            for x in x2:
+                ret.append(euclidean(x1, x))
+            out.append(np.array(ret, dtype=np.float32))
+        return np.vstack(out)
+
+def nearest_neighbor_eucliean_distances_parallel(
+    X: np.ndarray, 
+    neigh_indices: np.ndarray,
+    sel_indices: np.ndarray = None,
+    n_jobs: int = os.cpu_count()
+):
+    data = np.array(list(zip(X, X[neigh_indices])))
+    if sel_indices is not None:
+        data = data[sel_indices]
+    p = Parallelizer(n_jobs=n_jobs)
+    result = p.parallelize(map_func=_nearest_neighbor_eucliean_distances, map_data=data, reduce_func=FLATTEN)()
+    return np.vstack(result)
+
+def nearest_neighbor_eucliean_distances(
+    X: np.ndarray, 
+    neigh_indices: np.ndarray,
+    sel_indices: np.ndarray = None
+):
+    np.warnings.filterwarnings('ignore', category=np.VisibleDeprecationWarning)    
+    return nearest_neighbor_eucliean_distances_parallel(
+        X, 
+        neigh_indices, 
+        sel_indices
+    )
 
 
 def multi_values_dict(keys, values):
@@ -168,8 +210,6 @@ def read_tsv(path, header:bool = True, skip_first_line: bool = False, return_pan
         else:
             return result
 
-def FLATTEN(x): 
-    return [i for s in x for i in s]
 
 def default_aggrf(i):
     if len(np.unique(i)) == 1:

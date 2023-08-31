@@ -92,7 +92,6 @@ class MMDLayerBase:
                 )
         return loss
 
-
 class FCLayer(nn.Module):
     """FCLayer Fully-Connected Layers for a neural network """
     def __init__(
@@ -188,11 +187,10 @@ class FCLayer(nn.Module):
         self.device=device 
         return self
 
-
 class PredictionLayerBase(nn.Module):
     """Prediction layer base """
     def __init__(self, *, in_dim:int, n_pred_category: int):
-        super(PredictionLayer, self).__init__()
+        super(PredictionLayerBase, self).__init__()
         self.in_dim = in_dim
         self.n_pred_category = n_pred_category
         self.decoder = FCLayer(
@@ -374,9 +372,9 @@ class SAE(nn.Module):
 
 class PositionalEncoding(nn.Module):
     def __init__(self, *,
-                       n_hiddens: int, 
-                       dropout: float, 
-                       max_len:int=1000
+        n_hiddens: int, 
+        dropout: float, 
+        max_len:int=1000
     ) -> None:
         super(PositionalEncoding, self).__init__()
         assert(n_hiddens % 2 == 0)

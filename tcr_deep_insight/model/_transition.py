@@ -89,10 +89,10 @@ class TransitionVAE(VAEMixin):
         self.fc_t = nn.Sequential(
             nn.Linear(self._hidden_stacks[-1], self.n_latent),
             nn.ReLU(),
-            nn.BatchNorm1d(),
+            nn.BatchNorm1d(self.n_latent),
             nn.Linear(self.n_latent, self.n_latent),
             nn.ReLU(),
-            nn.BatchNorm1d(),
+            nn.BatchNorm1d(self.n_latent),
             nn.Linear(self.n_latent, self.n_latent)
         )
         self.fc_d = nn.Sequential(
@@ -112,6 +112,7 @@ class TransitionVAE(VAEMixin):
     def fit(self,
             max_epoch:int = 35, 
             n_per_batch:int = 128,
+            reconstruction_weight: float = 1.,
             kl_weight: float = 1.,
             pred_weight: float = 1.,
             mmd_weight: float = 1.,
@@ -530,9 +531,9 @@ class TransitionVAE(VAEMixin):
                 ).sum(1).mean()
                 '''
                 
-                avg_transition_loss = nn.MSELoss(reduction='sum')(target_H['q_mu'], source_H['q_mu'] + (T * D)) / n_per_batch
+                avg_transition_loss = transition_weight * nn.MSELoss(reduction='sum')(target_H['q_mu'], source_H['q_mu'] + T) / n_per_batch
 
-                reconstruction_loss = L['reconstruction_loss']
+                reconstruction_loss = reconstruction_weight * L['reconstruction_loss']
                 prediction_loss = pred_weight * L['prediction_loss'] 
                 kldiv_loss = kl_weight * L['kldiv_loss']    
                 mmd_loss = mmd_weight * L['mmd_loss']
@@ -548,9 +549,9 @@ class TransitionVAE(VAEMixin):
                     epoch_prediction_loss += prediction_loss.sum().item()
 
                 if epoch > max_epoch - pred_last_n_epoch:
-                    loss = avg_reconstruction_loss + avg_kldiv_loss + avg_mmd_loss + prediction_loss.sum() + avg_transition_loss * transition_weight
+                    loss = avg_reconstruction_loss + avg_kldiv_loss + avg_mmd_loss + prediction_loss.sum() + avg_transition_loss
                 else: 
-                    loss = avg_reconstruction_loss + avg_kldiv_loss + avg_mmd_loss
+                    loss = avg_reconstruction_loss + avg_kldiv_loss + avg_mmd_loss + avg_transition_loss
     
                 if self.constrain_latent_embedding:
                     loss += constrain_weight * L['latent_constrain_loss']

@@ -133,12 +133,26 @@ def _sec_to_str(t):
         reduce(lambda ll,b : divmod(ll[0],b) + ll[1:],
             [(t*1000,),1000,60,60])
 
+
+def is_notebook() -> bool:
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True   # Jupyter notebook or qtconsole
+        elif shell == 'TerminalInteractiveShell':
+            return False  # Terminal running IPython
+        else:
+            return False  # Other type (?)
+    except NameError:
+        return False      # Probably standard Python interpreter
+
+
 def _terminate():
     """ 
     @brief  Function called when program terminates.
             Similar to mt, but writes total runtime.
     """
-    if verbosity > 0:
+    if verbosity > 0 and not is_notebook():
         now = time.time()
         elapsed_since_start = now - start
         mt(_sec_to_str(elapsed_since_start),'- total runtime')

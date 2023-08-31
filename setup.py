@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="TCRDeepInsight",
-    version="0.0.1",
+    version="0.0.2",
     author="Ziwei Xue",
     author_email="xueziweisz@gmail.com",
     description="TCRDeepInsight: a deep learning framework for single-cell GEX/TCR  analysis",

@@ -47,7 +47,7 @@ from ._config import get_config
 from ..utils._tensor_utils import one_hot, get_k_elements, get_last_k_elements
 from ..utils._decorators import typed
 from ..utils._loss import LossFunction
-from ..utils._logger import mt
+from ..utils._logger import mt, Colors
 
 from ..utils._utilities import random_subset_by_key, euclidean
 from ..utils._compat import Literal
@@ -59,7 +59,6 @@ from ..utils._definitions import (
     TRAB_DEFINITION,
     TRB_DEFINITION,
 )
-from ..utils._logger import mt
 from ..utils._umap import (
     umap_is_installed, 
     cuml_is_installed,
@@ -117,6 +116,14 @@ class TRABModelMixin(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_layers[1], labels_number)
         )
+
+    def __repr__(self):
+        return f'{Colors.GREEN}TRABModel{Colors.NC} object containing:\n' + \
+            f'    bert_config: {self.config}\n' + \
+            f'    pooling: {self.pooling}\n' + \
+            f'    pooling_cls_position: {self.pooling_cls_position}\n' + \
+            f'    pooling_weight: {self.pooling_weight}\n' + \
+            f'    labels_number: {self.labels_number}\n'
 
     def forward(self,
         *,
@@ -301,6 +308,12 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         """
 
         super(VAEMixin, self).__init__()
+        if adata.X.dtype != np.int32:
+            mt("Warning: adata.X is not of type np.int32. " + \
+               "Converting to np.int32. Please save the anndata.X" + \
+               "in np.int32 to prevent this warning.")
+            adata.X = adata.X.astype(np.int32)
+            
         self.adata = adata
         self.in_dim = adata.shape[1] if adata else -1
         self.n_hidden = hidden_stacks[-1]
@@ -442,6 +455,16 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         self._trained = False 
 
         self.to(device)
+
+    def __repr__(self):
+        return f'{Colors.GREEN}VAEModel{Colors.NC} object containing:\n' + \
+            f'    adata: {self.adata}\n' + \
+            f'    in_dim: {self.in_dim}\n' + \
+            f'    n_hidden: {self.n_hidden}\n' + \
+            f'    labels: {self.label_key} of {Colors.CYAN}{self.n_label}{Colors.NC}\n' if self.batch_key else '' + \
+            f'    batchs: {self.batch_key} of {Colors.CYAN}{self.n_batch}{Colors.NC}\n' if self.label_key else '' + \
+            f'    categorical_covaariates: {self.categorical_covariate_keys} of {Colors.CYAN}{self.n_categorical_covariate}{Colors.NC}\n' if self.categorical_covariate_keys else ''
+            
 
     def initialize_dataset(self):
         mt("Initializing dataset into memory")
@@ -1224,7 +1247,13 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         self.decoder._fclayer[0].weight = nn.Parameter(new_weight)
         self.to(self.device)
 
-    def transfer_umap(self, reference_adata: sc.AnnData, use_cuml: bool = False):
+    def transfer_umap(
+        self, 
+        reference_adata: sc.AnnData, 
+        method: Literal['retrain','knn'] = 'retrain', 
+        n_epochs: int = 10,
+        use_cuml_umap: bool = False
+    ):
         """
         Transfer umap embedding from reference_adata to self.adata
 
@@ -1236,8 +1265,8 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         self.adata.obsm["X_umap"] = np.zeros((len(self.adata), 2))
         ss = set(s)
         indices = list(map(lambda x: x in ss, self.adata.obs.index))
+        query_indices = list(map(lambda x: x not in ss, self.adata.obs.index))
         self.adata.obsm["X_umap"][indices] = reference_adata[s].obsm["X_umap"]
-
 
         if 'X_gex' not in self.adata.obsm.keys():
             mt("X_gex is not found in model.adata.obsm. Calculating latent embedding")
@@ -1246,21 +1275,30 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
             mt("latent embedding calculation finished")
 
         x = self.adata.obsm["X_umap"][indices]
-        mt("Fitting reference UMAP")
-        if use_cuml:
-            raise NotImplementedError()
-        else:
-            reducer = get_default_umap_reducer(
-                init = x,
-                target_metric = 'euclidean', 
-                n_epochs = 10
-            )
-
-        reducer.fit(self.adata.obsm["X_gex"][indices], y=x)
-        Z = self.adata.obsm["X_gex"]
-        mt("Transforming UMAP")
-        self.adata.obsm["X_umap"] = reducer.transform(Z)
         
+        if method == 'retrain':
+            mt("Fitting reference UMAP")
+            if use_cuml_umap:
+                raise NotImplementedError()
+            else:
+                reducer = get_default_umap_reducer(
+                    init = x,
+                    target_metric = 'euclidean', 
+                    n_epochs = n_epochs
+                )
+
+            reducer.fit(self.adata.obsm["X_gex"][indices], y=x)
+            Z = self.adata.obsm["X_gex"]
+            mt("Transforming UMAP")
+            self.adata.obsm["X_umap"] = reducer.transform(Z)
+        else:
+            from sklearn.neighbors import NearestNeighbors
+            mt("Fitting KNN")
+            knn = NearestNeighbors(n_neighbors=5)
+            knn.fit(self.adata.obsm["X_gex"][indices])
+            D, I = knn.kneighbors(self.adata.obsm["X_gex"][query_indices])
+            mt("Transforming UMAP")
+            self.adata.obsm["X_umap"][query_indices] = self.adata.obsm["X_umap"][indices][I].mean(1)
 
     def transfer_label(self, reference_adata: sc.AnnData, label_key: str, method: Literal['knn'] = 'knn', **method_kwargs):
         """

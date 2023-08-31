@@ -19,33 +19,50 @@ except ImportError:
 
 
 def get_default_umap_reducer(**kwargs):
+    if 'min_dist' not in kwargs:
+        kwargs['min_dist'] = 0.1
+    if 'spread' not in kwargs:
+        kwargs['spread'] = 1.5
+    if 'local_connectivity' not in kwargs:
+        kwargs['local_connectivity'] = 1.5
+    if 'verbose' not in kwargs:
+        kwargs['verbose'] = True
+    if 'repulsion_strength' not in kwargs:
+        kwargs['repulsion_strength'] = 1.2
     return cpuUMAP(
-        min_dist=0.1, 
-        spread=1.5, 
-        local_connectivity=1.5, 
-        verbose=True, 
-        repulsion_strength=1.2,
         **kwargs
     )
 
-def get_constrained_umap_reducer():
+def get_constrained_umap_reducer(**kwargs):
+    if 'min_dist' not in kwargs:
+        kwargs['min_dist'] = 0.1
+    if 'spread' not in kwargs:
+        kwargs['spread'] = 1.5
+    if 'local_connectivity' not in kwargs:
+        kwargs['local_connectivity'] = 1.5
+    if 'verbose' not in kwargs:
+        kwargs['verbose'] = True
+    if 'repulsion_strength' not in kwargs:
+        kwargs['repulsion_strength'] = 1.2
     return cpuUMAP(
-        min_dist=0.1, 
-        spread=1.5, 
-        local_connectivity=1.5, 
-        verbose=True, 
-        repulsion_strength=1.2,
         target_metric='euclidean',
+        **kwargs
     )
 
 def get_default_cuml_reducer(**kwargs):
+    if 'min_dist' not in kwargs:
+        kwargs['min_dist'] = 0.1
+    if 'spread' not in kwargs:
+        kwargs['spread'] = 1.5
+    if 'local_connectivity' not in kwargs:
+        kwargs['local_connectivity'] = 1.5
+    if 'verbose' not in kwargs:
+        kwargs['verbose'] = True
+    if 'repulsion_strength' not in kwargs:
+        kwargs['repulsion_strength'] = 1.2
+
     if torch.cuda.is_available():
         return cumlUMAP(
-            min_dist=0.1, 
-            spread=1.5, 
-            local_connectivity=1.5, 
-            verbose=True, 
-            repulsion_strength=1.2,
             **kwargs
         )
     else:

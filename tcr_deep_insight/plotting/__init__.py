@@ -10,6 +10,10 @@ font_files = font_manager.findSystemFonts(fontpaths=['./tcr_deep_insight/plottin
 for font_file in font_files:
     font_manager.fontManager.addfont(font_file)
 
+import os
+os.system('export LC_CTYPE="en_US.UTF-8')
+os.environ["LC_CTYPE"] = "en_US.UTF-8"
+
 plt.rcParams['font.family'] = 'arial'
 plt.rcParams['font.size'] = 12
 plt.rcParams['figure.dpi'] = 300

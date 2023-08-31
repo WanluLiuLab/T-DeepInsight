@@ -9,7 +9,7 @@ import numpy as np
 from scipy.sparse import issparse
 
 
-class Paralleizer:
+class Parallelizer:
     def __init__(self, n_jobs:int):
         self.n_jobs = self.get_n_jobs(n_jobs=n_jobs)
         self._msg_shown = False 
@@ -105,7 +105,7 @@ class Paralleizer:
             if pass_queue and progress:
                 pbar = None if tqdm is None else tqdm(total=col_len, unit=progress_unit)
                 queue = Manager().Queue()
-                thread = Thread(target=Paralleizer.__update__, args=(pbar, queue, len(map_datas)))
+                thread = Thread(target=Parallelizer.__update__, args=(pbar, queue, len(map_datas)))
                 thread.start()
             else:
                 pbar, queue, thread = None, None, None

@@ -1,9 +1,13 @@
 import os
 from typing import Dict, List, Optional
+import pandas as pd
 import scanpy as sc 
 import numpy as np 
 
 from ..utils._compat import Literal
+from ..utils._logger import Colors
+from ..utils._utilities import FLATTEN
+from ..utils._definitions import TRAB_DEFINITION
 
 class TCRDeepInsightClusterResult:
     def __init__(
@@ -48,9 +52,9 @@ class TCRDeepInsightClusterResult:
         self._gex_adata = gex_adata
 
     def __repr__(self) -> str:
-        return 'TCRDeepInsightClusterResult object containing {} clusters'.format(len(self.data.shape[0]))
+        return  f'{Colors.GREEN}TCRDeepInsightClusterResult{Colors.NC} object containing {Colors.CYAN}{self.data.shape[0]}{Colors.NC} clusters'
     
-    
+
     def save_to_disk(self, save_path, save_tcr_data=True, save_gex_data=True):
         """
         Save the cluster result to disk
@@ -146,7 +150,22 @@ class TCRDeepInsightClusterResult:
             return_background_tcrs=return_background_tcrs,                
             additional_label_key_values=additional_label_key_values
         )
-        
+    
+    def to_pandas_dataframe(self):
+        ret = []
+        cluster_labels = []
+        for i in range(len(self.data)):
+            ret.append(
+                list(map(lambda x: x.split("="), filter(lambda x: x != '-', self.data.obs.iloc[i].loc[
+                    list(filter(lambda z: 'TCRab' in z, self.data.obs.columns))
+                ].to_numpy())))
+            )
+            cluster_labels.append([self.data.obs.iloc[i].loc["cluster_index"]] * len(ret[-1]))
+        df = pd.DataFrame(FLATTEN(ret), columns = TRAB_DEFINITION + ['individual'])
+        df['cluster_index'] = FLATTEN(cluster_labels)
+        return df
+
+
     def _get_tcrs_for_cluster(
         self, 
         label: str, 

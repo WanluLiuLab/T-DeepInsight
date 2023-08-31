@@ -62,8 +62,7 @@ from ..utils._definitions import (
 )
 from ..utils._logger import mt
 from ..utils._utilities import default_aggrf
-
-
+from ..utils._utilities import nearest_neighbor_eucliean_distances
 MODULE_PATH = Path(__file__).parent
 warnings.filterwarnings("ignore")
 
@@ -401,31 +400,12 @@ def get_pretrained_tcr_embedding(
     tcr_adata.obsm["X_tcr"] = all_embedding
     tcr_adata.obsm["X_tcr_pca"] = all_embedding_pca
 
-def cluster_tcr(
+def _prepare_tcr_embedding(
     tcr_adata: sc.AnnData,
-    label_key: str,  
-    gpu=0,
     layer_norm: bool = True,
-    max_distance: float = 25,
-    max_cluster_size: int = 40,
-    no_gex: bool = False
-):
-    """
-    Cluster TCRs by joint TCR-GEX embedding.
-
-    :param tcr_adata: AnnData object containing TCR data
-    :param label_key: Key of the label to cluster
-    :param gpu: GPU ID. Default: 0
-    :param layer_norm: Whether to use LayerNorm. Default: True
-    :param max_distance: Maximum distance. Default: 25
-    :param max_cluster_size: Maximum cluster size for dTCR clusters. Default: 40
-
-    :return: sc.AnnData containing clustered TCRs.
-
-    .. note::
-        The `gpu` parameter indicates GPU to use for clustering. If `gpu` is 0, CPU is used.
-
-    """
+    no_gex: bool = False,
+    _tcr_embedding_weight: float = 6.,
+) -> Tuple[np.ndarray, int, int]:
     if layer_norm:
         # LayerNorm for TCR and GEX
         ln_1 = torch.nn.LayerNorm(tcr_adata.obsm["X_tcr_pca"].shape[1])
@@ -445,37 +425,64 @@ def cluster_tcr(
         else:
             all_tcr_gex_embedding = np.hstack([
                 tcr_adata.obsm["X_tcr_pca"],
-                6*tcr_adata.obsm["X_gex"]
+                _tcr_embedding_weight*tcr_adata.obsm["X_gex"]
             ])
+    return all_tcr_gex_embedding, X_tcr_pca.shape[1], X_gex.shape[1]
+
+def cluster_tcr(
+    tcr_adata: sc.AnnData,
+    label_key: str = None,  
+    gpu=0,
+    pure_label: bool = True,
+    layer_norm: bool = True,
+    max_distance: float = 25,
+    max_cluster_size: int = 40,
+    no_gex: bool = False,
+):
+    """
+    Cluster TCRs by joint TCR-GEX embedding.
+
+    :param tcr_adata: AnnData object containing TCR data
+    :param label_key: Key of the label to cluster
+    :param gpu: GPU ID. Default: 0
+    :param layer_norm: Whether to use LayerNorm. Default: True
+    :param max_distance: Maximum distance. Default: 25
+    :param max_cluster_size: Maximum cluster size for dTCR clusters. Default: 40
+
+    :return: sc.AnnData containing clustered TCRs.
+
+    .. note::
+        The `gpu` parameter indicates GPU to use for clustering. If `gpu` is 0, CPU is used.
+
+    """
+    all_tcr_gex_embedding, tcr_dim, gex_dim = _prepare_tcr_embedding(
+        tcr_adata,
+        layer_norm=layer_norm,
+        no_gex=no_gex
+    )
     result = _cluster_tcr_by_label(
         tcr_adata.obs, 
         all_tcr_gex_embedding, 
         all_tcr_gex_embedding, 
+        tcr_dim,
+        gex_dim,
         label_key, 
         gpu,
+        pure_label,
         max_distance,
-        max_cluster_size
+        max_cluster_size,
     )
     return result
 
-@typed({
-    "tcr_adata": sc.AnnData,
-    "tcr_reference_adata": sc.AnnData,
-    "label_key": str,
-    "gpu": int,
-    "layer_norm": bool,
-    "max_distance": float,
-    "max_cluster_size": int
-})
 def cluster_tcr_from_reference(
     tcr_adata: sc.AnnData,
     tcr_reference_adata: sc.AnnData,
-    label_key: str,  
+    label_key: str = None,  
     gpu=0,
     layer_norm: bool = True,
     max_distance:float = 25.,
     max_cluster_size: int = 40,
-    no_gex: bool = False
+    no_gex: bool = False,
 ) -> TCRDeepInsightClusterResult:
     """
     Cluster TCRs from reference. 
@@ -496,56 +503,16 @@ def cluster_tcr_from_reference(
         The `gpu` parameter indicates GPU to use for clustering. If `gpu` is 0, CPU is used.
     
     """
-    if layer_norm:
-        # LayerNorm for TCR and GEX
-        ln_1 = torch.nn.LayerNorm(tcr_reference_adata.obsm["X_tcr_pca"].shape[1])
-        X_tcr_pca = ln_1(torch.tensor(tcr_reference_adata.obsm["X_tcr_pca"])).detach().numpy()
-        ln_2 = torch.nn.LayerNorm(tcr_reference_adata.obsm["X_gex"].shape[1])
-        X_gex = ln_2(torch.tensor(tcr_reference_adata.obsm["X_gex"])).detach().numpy()
-
-        if no_gex:
-            all_tcr_gex_embedding_reference = X_tcr_pca
-        else:
-            all_tcr_gex_embedding_reference = np.hstack([
-                X_tcr_pca,
-                X_gex
-            ])
-        X_tcr_pca = ln_1(torch.tensor(tcr_adata.obsm["X_tcr_pca"])).detach().numpy()
-        X_gex = ln_2(torch.tensor(tcr_adata.obsm["X_gex"])).detach().numpy()
-
-        if no_gex:
-            all_tcr_gex_embedding_query = X_tcr_pca
-        else:
-            all_tcr_gex_embedding_query = np.hstack([
-                X_tcr_pca,
-                X_gex
-            ])
-
-        all_tcr_gex_embedding = np.vstack([
-            all_tcr_gex_embedding_reference,
-            all_tcr_gex_embedding_query
-        ])
-    else:
-        # No LayerNorm for TCR and GEX. 
-        if no_gex:
-            all_tcr_gex_embedding_reference = tcr_reference_adata.obsm["X_tcr_pca"]
-        else:
-            all_tcr_gex_embedding_reference = np.hstack([
-                tcr_reference_adata.obsm["X_tcr_pca"],
-                6*tcr_reference_adata.obsm["X_gex"]
-            ])
-        if no_gex:
-            all_tcr_gex_embedding_query = tcr_adata.obsm["X_tcr_pca"]
-        else:
-            all_tcr_gex_embedding_query = np.hstack([
-                tcr_adata.obsm["X_tcr_pca"],
-                6*tcr_adata.obsm["X_gex"]
-            ])
-
-        all_tcr_gex_embedding = np.vstack([
-            all_tcr_gex_embedding_reference,
-            all_tcr_gex_embedding_query
-        ])
+    all_tcr_gex_embedding_reference, tcr_dim, gex_dim = _prepare_tcr_embedding(
+        tcr_reference_adata,
+        layer_norm=layer_norm,
+        no_gex=no_gex
+    )
+    all_tcr_gex_embedding_query, tcr_dim, gex_dim = _prepare_tcr_embedding(
+        tcr_adata,
+        layer_norm=layer_norm,
+        no_gex=no_gex
+    )
 
     df = pd.concat([
         tcr_reference_adata.obs,
@@ -554,12 +521,14 @@ def cluster_tcr_from_reference(
 
     result = _cluster_tcr_by_label(
         df, 
-        all_tcr_gex_embedding, 
+        all_tcr_gex_embedding_reference, 
         all_tcr_gex_embedding_query, 
+        tcr_dim,
+        gex_dim,
         label_key, 
         gpu,
         max_distance,
-        max_cluster_size
+        max_cluster_size,
     )
     return result
 
@@ -567,19 +536,26 @@ def cluster_tcr_from_reference(
     "df": pd.DataFrame,
     "all_tcr_gex_embedding": np.ndarray,
     "query_tcr_gex_embedding": np.ndarray,
+    "tcr_dim": int,
+    "gex_dim": int,
     "label_key": str,
     "gpu": int,
+    "pure_label": bool,
     "max_distance": float,
-    "max_cluster_size": int
+    "max_cluster_size": int,
 })
 def _cluster_tcr_by_label(
-        df, 
-        all_tcr_gex_embedding, 
-        query_tcr_gex_embedding, 
-        label_key, 
-        gpu = 0,
-        max_distance = 25,
-        max_cluster_size = 40
+    df, 
+    all_tcr_gex_embedding, 
+    query_tcr_gex_embedding, 
+    tcr_dim, 
+    gex_dim,
+    label_key = None, 
+    gpu = 0,
+    pure_label: bool = True,
+    max_distance = 25,
+    max_cluster_size = 40,
+
 ) -> TCRDeepInsightClusterResult:
     kmeans = faiss.Kmeans(
         all_tcr_gex_embedding.shape[1],
@@ -592,15 +568,20 @@ def _cluster_tcr_by_label(
     D, I = kmeans.index.search(query_tcr_gex_embedding, max_cluster_size)
 
     _result = []
-    label_map = dict(zip(range(len(df)), df[label_key]))
-    labels = np.unique(df[label_key])
-    mt("Iterative anchoring...")
+    if label_key is not None:
+        label_map = dict(zip(range(len(df)), df[label_key]))
+    else:
+        label_map = dict(zip(range(len(df)), ['undefined']*len(df)))
+        mt("Warning: No label key is provided.")
+        pure_label = False
+    mt("Iterative select TCRs as clustering anchors")
+    
     for i in tqdm.trange(I.shape[0]):
         label = np.array([label_map[x] for x in I[i]])
         for j in list(range(1, max_cluster_size+1))[::-1]:
             # if len(np.unique(label[:j])) == 1 and label[0] in labels:
             # Update: 
-            if len(np.unique(label[:j])) == 1 and label[0] in labels and D[i][j-1] < max_distance:
+            if (len(np.unique(label[:j])) == 1 or (not pure_label)) and D[i][j-1] < max_distance:
                 d = np.unique(label[:j])[0]
                 comp = list(filter(lambda x: label[x] != d, range(j, max_cluster_size)))[:j]
                 # comp = list(range(j, min(40, 2*j)))
@@ -609,22 +590,20 @@ def _cluster_tcr_by_label(
                 # a,b = clust.mean(axis=0), comp.mean(axis=0)
                 # euc_distance = euclidean(a,b)
                 # pval = multivariate_gaussian_p_value(clust, comp)
-
-
                 _result.append([label[0]] + \
                         list( I[i][:j]) + \
                         [-1] * (max_cluster_size-j) + \
                         [j] + \
                         [D[i][1:j].mean(), 
-                        D[i][comp].mean()
+                        D[i][comp].mean(),
                 ])
-
                 break
     
     result = pd.DataFrame(_result)
     
     result['cluster_index'] = result.index
 
+    # remove singletons clusterss
     result = result[result.iloc[:,max_cluster_size+1] > 1]
     result = result.sort_values(max_cluster_size+1, ascending=False)
 
@@ -633,6 +612,8 @@ def _cluster_tcr_by_label(
     all_indices.remove(-1)
     all_indices = set(all_indices)
     selected_indices = []
+
+
     mt("Remove repetitive clusters...")
     for i in tqdm.trange(len(result)):
         if result.iloc[i,1] in all_indices:
@@ -679,28 +660,16 @@ def _cluster_tcr_by_label(
     )
 
 
-
     result_tcr.columns = (
         [label_key]
-        + [f"TCRab{x}" for x in range(1, 41)]
+        + [f"TCRab{x}" for x in range(1, max_cluster_size+1)]
         + [
             "number_of_tcrs",
             "mean_distance",
             "mean_distance_other",
             "cluster_index",
             "number_of_individuals",
-        ]
-    )
-    result_individual['number_of_individuals'] = result_tcr['number_of_individuals']
-    result_individual.columns = (
-        [label_key]
-        + [f"individual{x}" for x in range(1, 41)]
-        + [
-            "number_of_tcrs",
-            "mean_distance",
-            "mean_distance_other",
-            "cluster_index",
-            "number_of_individuals",
+            "number_of_unique_tcrs"
         ]
     )
 
@@ -708,8 +677,24 @@ def _cluster_tcr_by_label(
     # result_tcr = result_tcr[result_tcr['mean_distance'] > 1e-3]
 
     result_tcr['disease_association_score'] = result_tcr['mean_distance_other'] - result_tcr['mean_distance']
-
     result_tcr['tcr_similarity_score'] = 100 - result_tcr['mean_distance']
+
+    D_gex = nearest_neighbor_eucliean_distances(
+        query_tcr_gex_embedding[:,tcr_dim:],
+        I,
+        result_tcr['cluster_index']
+    )
+    D_tcr = nearest_neighbor_eucliean_distances(
+        query_tcr_gex_embedding[:,:tcr_dim],
+        I,
+        result_tcr['cluster_index']
+    )
+
+    result_tcr['mean_distance_gex'] = D_gex.mean(axis=1)
+    result_tcr['mean_distance_tcr'] = D_tcr.mean(axis=1)
+
+    if not pure_label:
+        result_tcr = result_tcr.drop(columns=[label_key, 'mean_distance_other', 'disease_association_score'])
 
     return TCRDeepInsightClusterResult(
         sc.AnnData(
@@ -759,8 +744,10 @@ def inject_labels_for_tcr_cluster_adata(
             )
         )
     ].to_numpy()
+
     if "tcr" not in reference_adata.obs.columns:
         raise ValueError("tcr column not found in reference_adata.obs")
+    
     # For each list of TCRs, find the label of the most abundant TCR
     labels = []
     tcr2int = dict(zip(reference_adata.obs['tcr'], range(len(reference_adata.obs['tcr']))))
