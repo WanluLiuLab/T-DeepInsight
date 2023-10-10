@@ -5,6 +5,8 @@ from pathlib import Path
 import difflib
 import numpy as np
 
+from ._amino_acids import _AMINO_ACIDS_INDEX, _AMINO_ACIDS_INDEX_REVERSE
+
 MODULE_PATH = Path(__file__).parent
 
 @dataclass
@@ -519,3 +521,23 @@ def encode_mr_mask(cdr3a, cdr3b, va_gene, ja_gene, vb_gene, jb_gene, length=48, 
     i,j = getCDR3bmr_indices(cdr3b, vb_gene, jb_gene, species=species)
     b[i+2:j+2] = 1
     return np.hstack([a,b])
+
+def encode_tcr(
+    annotations,
+    trav,
+    cdr3a,
+    traj,
+    trbv,
+    cdr3b,
+    trbj,
+    cdr3a_max_length=45,
+    cdr3b_max_length=45,
+):
+    l = len(_AMINO_ACIDS_INDEX)
+    tcr_num_array = [annotations.VJ_GENES2INDEX(trav)+l+1] + \
+        list(map(lambda x: _AMINO_ACIDS_INDEX[x]+1, cdr3a)) + [0] * (cdr3a_max_length - len(cdr3a)) + \
+        [annotations.VJ_GENES2INDEX(traj)+l+1] + \
+        [annotations.VJ_GENES2INDEX(trbv)+l+1] + \
+        list(map(lambda x: _AMINO_ACIDS_INDEX[x]+1, cdr3b)) + [0] * (cdr3b_max_length - len(cdr3b)) + \
+        [annotations.VJ_GENES2INDEX(trbj)+l+1]
+    

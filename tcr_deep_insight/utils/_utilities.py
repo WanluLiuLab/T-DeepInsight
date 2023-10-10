@@ -14,6 +14,7 @@ from umap.distances import euclidean
 import warnings
 from ._logger import Colors
 from ._parallelizer import Parallelizer
+from ._decorators import deprecated
 
 
 def FLATTEN(x): 
@@ -98,6 +99,7 @@ def seqs2mat(sequences, char_set = list('ACDEFGHIKLMNPQRSTVWY'), gap_character =
     mat = pd.DataFrame(mat, columns = char_set)
     return mat
 
+@deprecated(ymd = (2023, 12, 31), optional_message = "Use random_subset_by_key_fast instead for better performance")
 def random_subset_by_key(adata, key, n):
     from collections import Counter
     counts = {k:v/len(adata) for k,v in Counter(adata.obs[key]).items()}
@@ -114,6 +116,18 @@ def random_subset_by_key(adata, key, n):
             )
     return sc.concat(adatas)
 
+def random_subset_by_key_fast(adata, key, n):
+    from collections import Counter
+    counts = {k:v/len(adata) for k,v in Counter(adata.obs[key]).items()}
+    ns = [(k,int(v*n)) for k,v in counts.items()]
+    all_indices = []
+    for k,v in ns:
+        indices = np.argwhere(adata.obs[key] == k).flatten()
+        if len(indices) > 0:
+            indices = np.random.choice(indices, v, replace=False)
+            all_indices.append(indices)
+    all_indices = np.hstack(all_indices)
+    return adata[all_indices]
 
 def exists(x):
     return x != None
@@ -220,3 +234,5 @@ def default_aggrf(i):
         c = Counter(i)
         return sorted(c.items(), key=lambda x: -x[1])[0][0]
             
+def default_pure_criteria(x,y):
+    return (Counter(x).most_common()[0][1] / len(x) > 0.8) and Counter(x).most_common()[0][0] == y

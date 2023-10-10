@@ -1,5 +1,7 @@
 import torch
+import numpy as np
 
+from ._compat import Literal
 umap_is_installed = False
 try:
     from umap import UMAP as cpuUMAP
@@ -74,3 +76,54 @@ def get_default_reducer():
     else:
         return get_default_umap_reducer()
     
+
+def transfer_umap(
+    reference_embedding,
+    reference_umap,
+    query_embedding,
+    method: Literal['retrain','knn'] = 'retrain', 
+    n_epochs: int = 10,
+    use_cuml_umap: bool = False,
+    subsample: int = 100000,
+    return_subsampled_indices: bool = False,
+    return_subsampled_reference_umap: bool = False,
+    return_reducer: bool = False,
+    **kwargs
+):
+    indices = np.arange(len(reference_embedding))
+    if subsample < len(indices):
+        indices = np.random.choice(indices, size=subsample, replace=False)
+
+    if method == 'retrain':
+        if use_cuml_umap:
+            raise NotImplementedError()
+        else:
+            reducer = get_default_umap_reducer(
+                init = reference_umap[indices],
+                target_metric = 'euclidean', 
+                n_epochs = n_epochs,
+                **kwargs
+            )
+
+        reducer.fit(reference_embedding[indices], y=reference_umap[indices])
+        x = reducer.transform(np.vstack([reference_embedding,query_embedding]))
+        z = x[len(reference_embedding):]
+        return {
+            'embedding': z,
+            'reducer': reducer if return_reducer else None,
+            'subsampled_indices': indices if return_subsampled_indices else None,
+            'subsampled_reference_umap': x[:len(reference_embedding)] if return_subsampled_reference_umap else None
+        }
+
+    else:
+        from sklearn.neighbors import NearestNeighbors
+        knn = NearestNeighbors(n_neighbors=5)
+        knn.fit(reference_embedding[indices])
+        D, I = knn.kneighbors(query_embedding)
+        z = reference_umap[indices][I].mean(1)
+        return {
+            'embedding': z,
+            'reducer': reducer if return_reducer else None,
+            'subsampled_indices': indices if return_subsampled_indices else None,
+            'subsampled_reference_umap': reference_umap[indices] if return_subsampled_reference_umap else None
+        }

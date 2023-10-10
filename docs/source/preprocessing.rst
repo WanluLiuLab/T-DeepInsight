@@ -1,8 +1,7 @@
 Preprocessing Immune Profiling Data 
 ===================================
 
-We fork the preprocessing codes from the huARdb paper for convenience in introducing 
-the dataset.
+We fork the preprocessing codes from the huARdb paper (https://doi.org/10.1093/nar/gkab857) for convenience in introducing the dataset.
 
 We use CellRanger (https://support.10xgenomics.com/single-cell-gene-expression/software/overview/welcome) to 10x process single-cell GEX/TCR library and generate the raw data.
 

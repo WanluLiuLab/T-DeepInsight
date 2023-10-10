@@ -43,7 +43,7 @@ class AminoAcidsCollator:
                 list(map(lambda x: x[1], ret)))
 
 
-class TCRabCollator:
+class TCRabCollatorForVJCDR3:
     def __init__(
         self,
         tra_max_length: int,

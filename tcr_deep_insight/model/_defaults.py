@@ -1,7 +1,7 @@
 from typing import Literal
 import torch 
-from ._tokenizer import TCRabTokenizer as TCRabTokenizer
-from ._collator import TCRabCollator as TCRabCollator
+from ._tokenizer import TCRabTokenizerForVJCDR3 as TCRabTokenizerForVJCDR3
+from ._collator import TCRabCollatorForVJCDR3 as TCRabCollatorForVJCDR3
 
 def default_optimizer(model, *args, **kwargs):
     optimizer = torch.optim.AdamW(model.parameters(), *args, **kwargs), 
@@ -9,14 +9,14 @@ def default_optimizer(model, *args, **kwargs):
     return (optimizer, scheduler)
 
 def default_tokenizer(species:Literal['human','mouse']):
-    return TCRabTokenizer(
+    return TCRabTokenizerForVJCDR3(
         tra_max_length=48, 
         trb_max_length=48,
         species=species
     )
 
 def default_collator(species:Literal['human','mouse']):
-    return TCRabCollator(
+    return TCRabCollatorForVJCDR3(
         tra_max_length=48, 
         trb_max_length=48,
         species=species

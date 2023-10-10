@@ -7,7 +7,7 @@ from typing import (
 from joblib import delayed, Parallel
 import numpy as np
 from scipy.sparse import issparse
-
+from ._logger import verbosity
 
 class Parallelizer:
     def __init__(self, n_jobs:int):
@@ -66,7 +66,10 @@ class Parallelizer:
                 try:
                     from tqdm.notebook import tqdm
                 except ImportError:
-                    from tqdm import tqdm_notebook as tqdm
+                    try:
+                        from tqdm import tqdm_notebook as tqdm
+                    except ImportError:
+                        from tqdm import tqdm
                 import ipywidgets  # noqa
             except ImportError:
                 global _msg_shown

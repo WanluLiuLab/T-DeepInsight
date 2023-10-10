@@ -15,6 +15,9 @@ def get_k_elements(arr: Iterable, k:int):
 def get_last_k_elements(arr: Iterable, k:int):
     return list(map(lambda x: x[k:], arr))
 
+def get_elements(arr: Iterable, a:int, b:int):
+    return list(map(lambda x: x[a:a+b], arr))
+
 def one_hot_(labels, return_dict = False):
     n_labels_ = np.unique(labels)
     n_labels = dict(zip(n_labels_, range(len(n_labels_))))

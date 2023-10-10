@@ -1,6 +1,6 @@
 import torch
 import scanpy as sc 
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, KernelPCA
 
 # Faiss
 import faiss
@@ -20,7 +20,6 @@ from collections import Counter
 from itertools import chain
 from copy import deepcopy
 import json
-import tqdm
 from typing import Any, Callable, Mapping, Union, Iterable, Tuple, Optional, Mapping
 import os
 from pathlib import Path
@@ -34,24 +33,24 @@ from transformers import (
 
 # TCR Deep Insight
 
-from ._deep_insight_result import TCRDeepInsightClusterResult
+from ._deep_insight_result import TDIResult
 from ..utils._compat import Literal
 from ..model._model import VAEMixin, TRABModelMixin
-from ..model._collator import TCRabCollator
-from ..model._tokenizer import TCRabTokenizer
+from ..model._collator import TCRabCollatorForVJCDR3
+from ..model._tokenizer import TCRabTokenizerForVJCDR3, TCRabTokenizerForCDR123
 from ..model._trainer import TCRabTrainer
 from ..model._model_utils import to_embedding_tcr_only_from_pandas_v2
 from ..model._primitives import *
 from ..model._config import get_config, get_human_config, get_mouse_config
-
+from ..utils._compat import Literal
 from ..utils._tensor_utils import one_hot, get_k_elements
 from ..utils._decorators import typed
 from ..utils._loss import LossFunction
-from ..utils._logger import mt
+from ..utils._logger import mt, get_tqdm
 from ..utils._distributions import multivariate_gaussian_p_value
-
+from ..utils._parallelizer import Parallelizer
 from ..utils._utilities import random_subset_by_key, euclidean
-from ..utils._compat import Literal
+
 from ..utils._definitions import (
     TRA_DEFINITION_ORIG,
     TRAB_DEFINITION_ORIG,
@@ -61,12 +60,16 @@ from ..utils._definitions import (
     TRB_DEFINITION,
 )
 from ..utils._logger import mt
-from ..utils._utilities import default_aggrf
+from ..utils._utilities import default_aggrf, default_pure_criteria
 from ..utils._utilities import nearest_neighbor_eucliean_distances
+from ..utils._decorators import deprecated
 MODULE_PATH = Path(__file__).parent
 warnings.filterwarnings("ignore")
 
-
+@deprecated(
+    ymd=(2023, 11, 1), 
+    optional_message="Auto pretraining will be deprecated after 2023-11-1 and will be replaced by a unified pipeline"
+)
 @typed({
     "gex_adata": sc.AnnData,
     "max_epoch": int,
@@ -168,6 +171,7 @@ def pretrain_gex_embedding(
         torch.save(vae_model_state_dict, state_dict_save_path)
     return vae_model
 
+# @deprecated
 @typed({
     "gex_adata": sc.AnnData,
     "gex_reference_adata": sc.AnnData,
@@ -244,6 +248,7 @@ def get_pretrained_gex_embedding(
 
     return model
 
+# @deprecated
 def get_pretrained_gex_umap(gex_adata, gex_reference_adata, **kwargs):
     """
     Get UMAP embedding from pretrained VAE model
@@ -273,7 +278,8 @@ def pretrain_tcr_embedding(
         max_epoch=50,
         show_progress=True, 
         n_per_batch=256, 
-        shuffle=True
+        shuffle=True,
+        encoding: Literal['vjcdr3','cdr123'] = 'vjcdr3'
     ):
     """
     Pretrain TCR embedding using the adata as reference
@@ -286,11 +292,21 @@ def pretrain_tcr_embedding(
     :param n_per_batch: Number of sequences per batch. Default: 256
     :param shuffle: Whether to shuffle. Default: True
     """
-    tcr_tokenizer = TCRabTokenizer(
-        tra_max_length=48, 
-        trb_max_length=48,
-        species=species
-    )
+    if encoding == 'vjcdr3':
+        tcr_tokenizer = TCRabTokenizerForVJCDR3(
+            tra_max_length=48, 
+            trb_max_length=48,
+            species=species
+        )
+    elif encoding == 'cdr123':
+        tcr_tokenizer = TCRabTokenizerForCDR123(
+            tra_max_length=48, 
+            trb_max_length=48,
+            species=species
+        )
+    else:
+        raise ValueError("Invalid encoding")
+    
     tcr_dataset = tcr_tokenizer.to_dataset(
     ids=tcr_adata.obs.index,
         alpha_v_genes=list(tcr_adata.obs['TRAV']),
@@ -306,7 +322,7 @@ def pretrain_tcr_embedding(
         labels_number=1
     ).to("cuda:0")
 
-    tcr_collator = TCRabCollator(48, 48, mlm_probability=0)
+    tcr_collator = TCRabCollatorForVJCDR3(48, 48, mlm_probability=0)
 
     tcr_model_optimizer = torch.optim.AdamW(tcr_model.parameters(), lr=5e-5)
 
@@ -340,10 +356,18 @@ def pretrain_tcr_embedding(
 def get_pretrained_tcr_embedding(
     tcr_adata: sc.AnnData, 
     bert_config: Mapping[str, Any],
+    encoding: Literal['vjcdr3','cdr123'] = 'vjcdr3',
+    species: Literal['human','mouse'] = 'human',
     checkpoint_path=os.path.join(MODULE_PATH, '../data/pretrained_weights/bert_tcr_768.ckpt'),
     pca_path: Optional[str] = None, 
     use_pca:bool=True, 
-    device='cuda:0'
+    use_kernel_pca: bool = False,
+    pca_n_components: int = 64,
+    device='cuda:0',
+    mask_tr: Literal['none','tra','trb'] = 'none',
+    pooling: Literal["cls", "mean", "max", "pool", "trb", "tra", "weighted"] = "mean",
+    pooling_weight: Tuple[float] = (0.1,0.9),
+    n_per_batch: int = 256,
 ):
     """
     Get TCR embedding from pretrained BERT model
@@ -361,35 +385,68 @@ def get_pretrained_tcr_embedding(
     mt("Building BERT model")
     tcr_model = TRABModelMixin(
         bert_config,
-        pooling='trb',
         pooling_cls_position=1,
-        labels_number=1
+        labels_number=1,
+        pooling=pooling,
+        pooling_weight=pooling_weight
     )
     tcr_model.to(device)
-    tokenizer = TCRabTokenizer(
-        tra_max_length=48,
-        trb_max_length=48,
-    )
+    if encoding == 'vjcdr3':
+        tcr_tokenizer = TCRabTokenizerForVJCDR3(
+            tra_max_length=48, 
+            trb_max_length=48,
+            species=species
+        )
+    elif encoding == 'cdr123':
+        tcr_tokenizer = TCRabTokenizerForCDR123(
+            tra_max_length=60, 
+            trb_max_length=60,
+            species=species
+        )
+        tcr_model.pooling_cls_position = 0
+    else:
+        raise ValueError("Invalid encoding")
+    
     mt("Loading BERT model checkpoints...")
-    tcr_model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    try:
+        tcr_model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    except RuntimeError as e:
+        mt("Failed to load the full pretrained BERT model. Please make sure the checkpoint path is correct.")
 
+    
     mt("Computing TCR Embeddings...")
     all_embedding = to_embedding_tcr_only_from_pandas_v2(
         tcr_model,
         tcr_adata.obs,
-        tokenizer,
+        tcr_tokenizer,
         device,
-        mask_tr='tra'
+        n_per_batch=n_per_batch,
+        mask_tr=mask_tr
     )
 
     if use_pca and os.path.exists(pca_path):
         mt("Loading PCA model...")
         pca = load(pca_path)
+        if use_kernel_pca:
+            assert(isinstance(pca, KernelPCA), "PCA model is not a KernelPCA model")
+        else:
+            assert(isinstance(pca, PCA), "PCA model is not a PCA model")
+            
         mt("Performing PCA...")
-        all_embedding_pca = np.array(pca.transform(all_embedding))
+        all_embedding_pca = pca.transform(all_embedding)
     elif use_pca:
-        pca = PCA(n_components=64).fit(all_embedding)
-        all_embedding_pca = np.array(pca.transform(all_embedding))
+        if use_kernel_pca:
+            pca = KernelPCA(
+                n_components=pca_n_components, 
+                kernel="rbf", 
+                gamma=10, 
+                fit_inverse_transform=True, 
+                alpha=0.1
+            )
+            all_embedding_pca = np.array(pca.fit_transform(all_embedding))
+        else:
+            pca = PCA(n_components=pca_n_components).fit(all_embedding)
+            all_embedding_pca = np.array(pca.transform(all_embedding))
         if pca_path is not None:
             mt("Saving PCA model...")
             dump(pca, pca_path)
@@ -403,7 +460,7 @@ def get_pretrained_tcr_embedding(
 def _prepare_tcr_embedding(
     tcr_adata: sc.AnnData,
     layer_norm: bool = True,
-    no_gex: bool = False,
+    use_gex: bool = True,
     _tcr_embedding_weight: float = 6.,
 ) -> Tuple[np.ndarray, int, int]:
     if layer_norm:
@@ -412,7 +469,7 @@ def _prepare_tcr_embedding(
         X_tcr_pca = ln_1(torch.tensor(tcr_adata.obsm["X_tcr_pca"]).float()).detach().numpy()
         ln_2 = torch.nn.LayerNorm(tcr_adata.obsm["X_gex"].shape[1])
         X_gex = ln_2(torch.tensor(tcr_adata.obsm["X_gex"]).float()).detach().numpy()
-        if no_gex:
+        if not use_gex:
             all_tcr_gex_embedding = X_tcr_pca
         else:
             all_tcr_gex_embedding = np.hstack([
@@ -420,7 +477,9 @@ def _prepare_tcr_embedding(
                 X_gex
             ])
     else:
-        if no_gex:
+        X_tcr_pca = tcr_adata.obsm["X_tcr_pca"]
+        X_gex = tcr_adata.obsm["X_gex"]
+        if not use_gex:
             all_tcr_gex_embedding = tcr_adata.obsm["X_tcr_pca"]
         else:
             all_tcr_gex_embedding = np.hstack([
@@ -429,15 +488,20 @@ def _prepare_tcr_embedding(
             ])
     return all_tcr_gex_embedding, X_tcr_pca.shape[1], X_gex.shape[1]
 
+
 def cluster_tcr(
     tcr_adata: sc.AnnData,
     label_key: str = None,  
+    include_label_keys: Optional[Iterable[str]] = None,
     gpu=0,
     pure_label: bool = True,
+    pure_criteria: Callable = default_pure_criteria,
     layer_norm: bool = True,
     max_distance: float = 25,
     max_cluster_size: int = 40,
-    no_gex: bool = False,
+    use_gex: bool = True,
+    filter_intersection_fraction: float = 0.7,
+    k: int = 3
 ):
     """
     Cluster TCRs by joint TCR-GEX embedding.
@@ -458,19 +522,23 @@ def cluster_tcr(
     all_tcr_gex_embedding, tcr_dim, gex_dim = _prepare_tcr_embedding(
         tcr_adata,
         layer_norm=layer_norm,
-        no_gex=no_gex
+        use_gex=use_gex
     )
-    result = _cluster_tcr_by_label(
+    result = _cluster_tcr_by_label_core(
         tcr_adata.obs, 
-        all_tcr_gex_embedding, 
-        all_tcr_gex_embedding, 
-        tcr_dim,
-        gex_dim,
-        label_key, 
-        gpu,
-        pure_label,
-        max_distance,
-        max_cluster_size,
+        all_tcr_gex_embedding=all_tcr_gex_embedding, 
+        query_tcr_gex_embedding=all_tcr_gex_embedding, 
+        tcr_dim=tcr_dim,
+        gex_dim=gex_dim,
+        label_key=label_key, 
+        include_label_keys=include_label_keys,
+        gpu=gpu,
+        pure_label=pure_label,
+        pure_criteria=pure_criteria,
+        max_distance=max_distance,
+        max_cluster_size=max_cluster_size,
+        k=k,
+        filter_intersection_fraction=filter_intersection_fraction,
     )
     return result
 
@@ -478,12 +546,15 @@ def cluster_tcr_from_reference(
     tcr_adata: sc.AnnData,
     tcr_reference_adata: sc.AnnData,
     label_key: str = None,  
+    include_label_keys: Optional[Iterable[str]] = None,
     gpu=0,
     layer_norm: bool = True,
+    pure_label: bool = True,
+    pure_criteria: Callable = lambda x,y,z: Counter(x).most_common()[0][1] / len(x) > y and Counter(x).most_common()[0][0] == z,
     max_distance:float = 25.,
     max_cluster_size: int = 40,
-    no_gex: bool = False,
-) -> TCRDeepInsightClusterResult:
+    use_gex: bool = True,
+) -> TDIResult:
     """
     Cluster TCRs from reference. 
 
@@ -495,9 +566,9 @@ def cluster_tcr_from_reference(
     :param layer_norm: Whether to use LayerNorm. Default: True
     :param max_distance: Maximum distance of the most dissimilar TCR in a dTCR cluster . Default: 25
     :param max_cluster_size: Maximum cluster size for dTCR clusters. Default: 40
-    :param no_gex: Whether to use GEX embedding. Default: False
+    :param use_gex: Whether to use GEX embedding. Default: True
 
-    :return: TCRDeepInsightClusterResult object containing clustered TCRs.
+    :return: TDIResult object containing clustered TCRs.
 
     .. note::
         The `gpu` parameter indicates GPU to use for clustering. If `gpu` is 0, CPU is used.
@@ -506,12 +577,12 @@ def cluster_tcr_from_reference(
     all_tcr_gex_embedding_reference, tcr_dim, gex_dim = _prepare_tcr_embedding(
         tcr_reference_adata,
         layer_norm=layer_norm,
-        no_gex=no_gex
+        use_gex=use_gex
     )
     all_tcr_gex_embedding_query, tcr_dim, gex_dim = _prepare_tcr_embedding(
         tcr_adata,
         layer_norm=layer_norm,
-        no_gex=no_gex
+        use_gex=use_gex
     )
 
     df = pd.concat([
@@ -519,16 +590,19 @@ def cluster_tcr_from_reference(
         tcr_adata.obs
     ])
 
-    result = _cluster_tcr_by_label(
+    result = _cluster_tcr_by_label_core(
         df, 
-        all_tcr_gex_embedding_reference, 
-        all_tcr_gex_embedding_query, 
-        tcr_dim,
-        gex_dim,
-        label_key, 
-        gpu,
-        max_distance,
-        max_cluster_size,
+        all_tcr_gex_embedding=all_tcr_gex_embedding_reference, 
+        query_tcr_gex_embedding=all_tcr_gex_embedding_query, 
+        tcr_dim=tcr_dim,
+        gex_dim=gex_dim,
+        label_key=label_key, 
+        include_label_keys=include_label_keys,
+        gpu=gpu,
+        pure_label=pure_label,
+        pure_criteria=pure_criteria,
+        max_distance=max_distance,
+        max_cluster_size=max_cluster_size,
     )
     return result
 
@@ -541,22 +615,30 @@ def cluster_tcr_from_reference(
     "label_key": str,
     "gpu": int,
     "pure_label": bool,
+    "pure_criteria": Callable,
+    "calculate_tcr_gex_distance": bool,
     "max_distance": float,
     "max_cluster_size": int,
 })
-def _cluster_tcr_by_label(
+def _cluster_tcr_by_label_core(
     df, 
+    *,
     all_tcr_gex_embedding, 
     query_tcr_gex_embedding, 
     tcr_dim, 
     gex_dim,
-    label_key = None, 
+    label_key = None,
+    include_label_keys: Optional[List[str]] = None,
     gpu = 0,
     pure_label: bool = True,
+    pure_criteria: Callable = lambda x,z: Counter(x).most_common()[0][1] / len(x) > 0.7 and Counter(x).most_common()[0][0] == z,
     max_distance = 25,
     max_cluster_size = 40,
-
-) -> TCRDeepInsightClusterResult:
+    calculate_tcr_gex_distance: bool = False,
+    n_jobs: int = 1,
+    k: int = 3,
+    filter_intersection_fraction: float = 0.7
+) -> TDIResult:
     kmeans = faiss.Kmeans(
         all_tcr_gex_embedding.shape[1],
         all_tcr_gex_embedding.shape[0],
@@ -567,136 +649,288 @@ def _cluster_tcr_by_label(
     kmeans.train(all_tcr_gex_embedding)
     D, I = kmeans.index.search(query_tcr_gex_embedding, max_cluster_size)
 
-    _result = []
+    CAT_STORAGE_SIZE = 10
+    NUM_CAT_STORAGE = int(max_cluster_size / CAT_STORAGE_SIZE)
+
+    _result = [[] for _ in range(NUM_CAT_STORAGE)]
+
     if label_key is not None:
         label_map = dict(zip(range(len(df)), df[label_key]))
     else:
         label_map = dict(zip(range(len(df)), ['undefined']*len(df)))
         mt("Warning: No label key is provided.")
         pure_label = False
+
     mt("Iterative select TCRs as clustering anchors")
     
-    for i in tqdm.trange(I.shape[0]):
-        label = np.array([label_map[x] for x in I[i]])
-        for j in list(range(1, max_cluster_size+1))[::-1]:
-            # if len(np.unique(label[:j])) == 1 and label[0] in labels:
-            # Update: 
-            if (len(np.unique(label[:j])) == 1 or (not pure_label)) and D[i][j-1] < max_distance:
-                d = np.unique(label[:j])[0]
-                comp = list(filter(lambda x: label[x] != d, range(j, max_cluster_size)))[:j]
-                # comp = list(range(j, min(40, 2*j)))
-                # comp = list(range(j, min(40, 2*j))) 
-                # clust, comp = all_tcr_gex_embedding[I[i][:j]], all_tcr_gex_embedding[I[i][comp]]
-                # a,b = clust.mean(axis=0), comp.mean(axis=0)
-                # euc_distance = euclidean(a,b)
-                # pval = multivariate_gaussian_p_value(clust, comp)
-                _result.append([label[0]] + \
-                        list( I[i][:j]) + \
-                        [-1] * (max_cluster_size-j) + \
-                        [j] + \
-                        [D[i][1:j].mean(), 
-                        D[i][comp].mean(),
-                ])
-                break
+    def FLATTEN(x): 
+        return [i for s in x for i in s]
+    def par_func(data, queue):
+        ret = []
+        for i in data:
+            if queue is not None:
+                queue.put(None)
+            label = np.array([label_map[x] for x in I[i]])
+            mp = np.argwhere(D[i] > max_distance)
+            if len(mp) > 0:
+                init_j = mp[0][0]
+            else:
+                init_j = max_cluster_size
+
+            for j in list(range(2, max(2,init_j+1)))[::-1]:
+                pure_criteria_pass = pure_criteria(label[:j], label[0])
+                if (pure_criteria_pass or (not pure_label)):
+                    d = label[0]
+                    if pure_label:
+                        pomc = list(filter(lambda x: label[x] == d, range(0, j)))
+                        comp = list(filter(lambda x: label[x] != d, range(j, max_cluster_size)))[:j]
+                    else: 
+                        pomc = list(range(0, j))
+                        comp = list(range(j, max_cluster_size))[:j]
+                    cluster_size = len(pomc)
+
+                    ret.append(((cluster_size-1) // CAT_STORAGE_SIZE, [
+                            label[0]] + \
+                            list( I[i][pomc]) + \
+                                [-1] * ((CAT_STORAGE_SIZE * (((cluster_size-1) // CAT_STORAGE_SIZE)+ 1)) - len(pomc)
+                            ) + \
+                            [cluster_size] + \
+                            [D[i][pomc].mean(), # mean distance for disease group
+                            D[i][comp].mean(), # mean distance for non-disease group,
+                            D[i][comp][:k].mean() - D[i][pomc][0], # distance between the first non-disease and the first disease
+                            i
+                    ]))
+            return ret 
     
-    result = pd.DataFrame(_result)
-    
-    result['cluster_index'] = result.index
+    if n_jobs > 1:
+        p = Parallelizer(n_jobs=n_jobs)
+        ret = p.parallelize(
+            map_func=par_func, 
+            map_data=list(range(I.shape[0])),
+            reduce_func=FLATTEN,
+            progress=True,
+        )()
+    else:
+        ret = []
+        pbar = get_tqdm()(total=I.shape[0], bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')
+        for i in range(I.shape[0]):
+            label = np.array([label_map[x] for x in I[i]])
+            mp = np.argwhere(D[i] > max_distance)
+            if len(mp) > 0:
+                init_j = mp[0][0]
+            else:
+                init_j = max_cluster_size
 
-    # remove singletons clusterss
-    result = result[result.iloc[:,max_cluster_size+1] > 1]
-    result = result.sort_values(max_cluster_size+1, ascending=False)
+            for j in list(range(2, max(2,init_j+1)))[::-1]:
+                pure_criteria_pass = pure_criteria(label[:j], label[0])
+                if (pure_criteria_pass or (not pure_label)):
+                    d = label[0]
+                    if pure_label:
+                        pomc = list(filter(lambda x: label[x] == d, range(0, j)))
+                        comp = list(filter(lambda x: label[x] != d, range(j, max_cluster_size)))[:j]
+                    else: 
+                        pomc = list(range(0, j))
+                        comp = list(range(j, max_cluster_size))[:j]
+                    cluster_size = len(pomc)
 
-    result.index = list(range(len(result)))
-    all_indices = list(np.unique(result.iloc[:,1:41].to_numpy()))
-    all_indices.remove(-1)
-    all_indices = set(all_indices)
-    selected_indices = []
+                    ret.append(((cluster_size-1) // CAT_STORAGE_SIZE, [
+                            label[0]] + \
+                            list( I[i][pomc]) + \
+                                [-1] * ((CAT_STORAGE_SIZE * (((cluster_size-1) // CAT_STORAGE_SIZE)+ 1)) - len(pomc)
+                            ) + \
+                            [cluster_size] + \
+                            [D[i][pomc].mean(), 
+                            D[i][comp].mean(),
+                            D[i][comp][:k].mean() - D[i][pomc][-1],
+                            i
+                    ]))
+                    break
+
+            pbar.update(1)
+        pbar.close()
+
+    for i in ret:
+        _result[i[0]].append(i[1])
+
+    all_result_tcr = []
+    all_tcr_sequence = df['tcr'].to_numpy()
+
+    for ii in range(len(_result)):
+        
+        result = pd.DataFrame(_result[ii])
+        max_cluster_size_ = (ii+1) * CAT_STORAGE_SIZE
+
+        if result.shape[0] == 0:
+            continue
+        # remove singletons clusters
+
+        result = result[result.iloc[:,max_cluster_size_+1] > 1]
+        result = result.sort_values(max_cluster_size_+1, ascending=False)
+        if result.shape[0] == 0:
+            continue
 
 
-    mt("Remove repetitive clusters...")
-    for i in tqdm.trange(len(result)):
-        if result.iloc[i,1] in all_indices:
-            selected_indices.append(i)
-            all_indices.remove(result.iloc[i,1])
-        for a in result.iloc[i,2:max_cluster_size+1].to_numpy():
-            if a >= 0 and a in all_indices:
-                all_indices.remove(a)
+        result.index = list(range(len(result)))
+        selected_indices = set()
+        appeared_clusters = set()
+        appeared_clusters_2 = {}
+        indices_mapping = {}
 
-    result = result.iloc[selected_indices]
 
-    result_tcr = result.copy()
+        for i in range(len(result)):
+            t = tuple(sorted(list(filter(lambda x: x >= 0, result.iloc[i,1:max_cluster_size_+1].to_numpy()))))
 
-    result_individual = result.copy()
-    for i in list(range(1, max_cluster_size+1))[::-1]:
-        result_tcr.iloc[:,i] = result_tcr.iloc[:,i].apply(
-            lambda x: df.iloc[x,:]['tcr'] if x >= 0 else '-'
-        )
-    for i in list(range(1, max_cluster_size+1))[::-1]:
-        result_individual.iloc[:,i] = result_individual.iloc[:,i].apply(
-            lambda x: df.iloc[x,:]['individual'] if x >= 0 else '-'
-        )
+            if t in appeared_clusters:
+                pbar.update(1)
+                continue
 
-    result_tcr['number_of_individuals'] = list(
-        map(
-            lambda x: len(np.unique(list(filter(lambda x: x != '-', x)))), 
-            result_individual.iloc[:,1:41].to_numpy()
-        )
-    )
-    result_tcr['number_of_unique_tcrs'] = list(
-        map(
-            lambda x: len(
-                np.unique(
-                    list(
-                        map(
-                            lambda z: "=".join(z.split("=")[:-1]),
-                            filter(lambda x: x != "-", x),
+            flag = False
+            st = set(t)
+            for j in t:
+                if j in appeared_clusters_2.keys():
+                    for k in appeared_clusters_2[j]:
+                        sk = set(k)
+                        # if st.issubset(sk):
+                        if len(st.intersection(sk)) / len(st) > 0.9:
+                            flag = True
+                        elif (len(st.intersection(sk)) / len(st) > filter_intersection_fraction and \
+                              len(st.intersection(sk)) / len(sk) > filter_intersection_fraction and \
+                              k in appeared_clusters
+                            ):
+                            if (result.iloc[indices_mapping[k], max_cluster_size_+2] > result.iloc[i,max_cluster_size_+2] and \
+                                len(st) >= len(sk)
+                            ):
+                                # this cluster is a subset of a already selected cluster
+                                # and the selected cluster has a higher mean distance
+                                # remove the selected cluster
+                                appeared_clusters.remove(k)
+                                if indices_mapping[k] in selected_indices:
+                                    selected_indices.remove(indices_mapping[k])
+                                for j in k:
+                                    if k in appeared_clusters_2[j]:
+                                        appeared_clusters_2[j].remove(k)
+                                break
+                            else:
+                                # this cluster is a subset of a already selected cluster, skip
+                                flag = True
+                                break
+
+            if flag:
+                pbar.update(1)
+                continue
+
+            appeared_clusters.add(t)
+            for j in t:
+                if j not in appeared_clusters_2:
+                    appeared_clusters_2[j] = [t]
+                else:
+                    appeared_clusters_2[j].append(t)
+
+            selected_indices.add(i)
+            indices_mapping[t] = i
+
+        result = result.iloc[list(selected_indices)]
+
+        if include_label_keys is not None and label_key is not None:
+            result = result[result.iloc[:,0].isin(include_label_keys)]
+
+        result_tcr = result.copy()
+        result_cell_number = result.copy()
+
+        for i in list(range(1, max_cluster_size_+1))[::-1]:
+            result_tcr.iloc[:,i] = result_tcr.iloc[:,i].apply(
+                lambda x: all_tcr_sequence[x] if x >= 0 else '-'
+            )
+
+            
+        result_tcr['number_of_individuals'] =list(
+            map(
+                lambda x: len(
+                    np.unique(
+                        list(
+                            map(
+                                lambda z: z.split("=")[-1],
+                                filter(lambda x: x != "-", x),
+                            )
                         )
                     )
-                )
-            ),
-            result_tcr.iloc[:, 1:41].to_numpy(),
+                ),
+                result_tcr.iloc[:,1:max_cluster_size_+1].to_numpy(),
+            )
         )
-    )
 
+        result_tcr['number_of_unique_tcrs'] = list(
+            map(
+                lambda x: len(
+                    np.unique(
+                        list(
+                            map(
+                                lambda z: "=".join(z.split("=")[:-1]),
+                                filter(lambda x: x != "-", x),
+                            )
+                        )
+                    )
+                ),
+                result_tcr.iloc[:, 1:max_cluster_size_+1].to_numpy(),
+            )
+        )
+        
+        
+        if 'number_of_cells' in df.columns:
+            all_number_of_cell = df['number_of_cells'].to_numpy()
+            for i in list(range(1, max_cluster_size_+1))[::-1]:
+                result_cell_number.iloc[:,i] = result_cell_number.iloc[:,i].apply(
+                    lambda x: all_number_of_cell[x] if x >= 0 else '-'
+                )
+            result_tcr['number_of_cells'] = result_cell_number.iloc[:,1:max_cluster_size_+1].sum(axis=1)
 
-    result_tcr.columns = (
-        [label_key]
-        + [f"TCRab{x}" for x in range(1, max_cluster_size+1)]
-        + [
-            "number_of_tcrs",
-            "mean_distance",
-            "mean_distance_other",
-            "cluster_index",
-            "number_of_individuals",
-            "number_of_unique_tcrs"
-        ]
-    )
+        
 
-    # result_tcr = result_tcr[result_tcr['number_of_unique_tcrs'] > 1]
-    # result_tcr = result_tcr[result_tcr['mean_distance'] > 1e-3]
+        result_tcr.columns = (
+            [label_key]
+            + [f"TCRab{x}" for x in range(1, result_tcr.shape[1]-8)]
+            + [
+                "number_of_tcrs",
+                "mean_distance",
+                "mean_distance_other",
+                "distance_difference",
+                "cluster_index",
+                "number_of_individuals",
+                "number_of_unique_tcrs"
+            ] + (["number_of_cells"] if 'number_of_cells' in df.columns else [])
+        )
 
-    result_tcr['disease_association_score'] = result_tcr['mean_distance_other'] - result_tcr['mean_distance']
-    result_tcr['tcr_similarity_score'] = 100 - result_tcr['mean_distance']
+        # result_tcr = result_tcr[result_tcr['number_of_unique_tcrs'] > 1]
+        # result_tcr = result_tcr[result_tcr['mean_distance'] > 1e-3]
 
-    D_gex = nearest_neighbor_eucliean_distances(
-        query_tcr_gex_embedding[:,tcr_dim:],
-        I,
-        result_tcr['cluster_index']
-    )
-    D_tcr = nearest_neighbor_eucliean_distances(
-        query_tcr_gex_embedding[:,:tcr_dim],
-        I,
-        result_tcr['cluster_index']
-    )
+        result_tcr['disease_association_score'] = result_tcr['distance_difference']
+        result_tcr['tcr_similarity_score'] = 100 - result_tcr['mean_distance']
 
-    result_tcr['mean_distance_gex'] = D_gex.mean(axis=1)
-    result_tcr['mean_distance_tcr'] = D_tcr.mean(axis=1)
+        if calculate_tcr_gex_distance:
+            D_gex = nearest_neighbor_eucliean_distances(
+                query_tcr_gex_embedding[:,tcr_dim:],
+                I,
+                result_tcr['cluster_index']
+            )
+            D_tcr = nearest_neighbor_eucliean_distances(
+                query_tcr_gex_embedding[:,:tcr_dim],
+                I,
+                result_tcr['cluster_index']
+            )
 
-    if not pure_label:
-        result_tcr = result_tcr.drop(columns=[label_key, 'mean_distance_other', 'disease_association_score'])
+            result_tcr['mean_distance_gex'] = D_gex.mean(axis=1)
+            result_tcr['mean_distance_tcr'] = D_tcr.mean(axis=1)
 
-    return TCRDeepInsightClusterResult(
+        result_tcr = result_tcr.drop(columns=['mean_distance','mean_distance_other','distance_difference'])
+        if not pure_label:
+            result_tcr = result_tcr.drop(columns=[label_key, 'disease_association_score'])
+        tcrs = list(map(','.join, result_tcr.loc[:,[f"TCRab{x}" for x in range(1, max_cluster_size_+1)]].to_numpy()))
+        result_tcr = result_tcr.loc[:,list(filter(lambda x: not x.startswith("TCRab"), result_tcr.columns))]
+        result_tcr.insert(0, "TCRab", tcrs)
+        all_result_tcr.append(result_tcr)
+
+    result_tcr = pd.concat(all_result_tcr)
+    return TDIResult(
         sc.AnnData(
             obs=result_tcr,
             uns={
@@ -790,6 +1024,7 @@ def query_tcr_without_gex(
         X_tcr_pca_reference = tcr_reference_adata.obsm["X_tcr_pca"]
         X_tcr_pca_query = tcr_query_adata.obsm["X_tcr_pca"]
 
+    mt("computing pairwise disease of TCRs...")
     kmeans = faiss.Kmeans(
         X_tcr_pca_query.shape[1],
         X_tcr_pca_query.shape[0],
@@ -797,7 +1032,9 @@ def query_tcr_without_gex(
         verbose=True,
         gpu=gpu
     )
-
+    # ignore faiss warnings
+    kmeans.cp.min_points_per_centroid = 1
+    kmeans.cp.max_points_per_centroid = 1000000000
     kmeans.train(X_tcr_pca_reference.astype(np.float32))
 
     D, I = kmeans.index.search(X_tcr_pca_query.astype(np.float32), 40)

@@ -32,7 +32,8 @@ except (ImportError, LookupError, FileNotFoundError):
         metadata = pkg_metadata(here.name)
         __version__ = metadata['Version']
     except:
-        __version__ = None 
+        from ._version import version 
+        __version__ = version
 
         
 def within_flit():

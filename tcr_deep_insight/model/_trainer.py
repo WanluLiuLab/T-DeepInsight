@@ -12,7 +12,7 @@ import numpy as np
 from pathlib import Path
 
 
-from ._collator import TCRabCollator
+from ._collator import TCRabCollatorForVJCDR3
 from ..utils._tensor_utils import one_hot
 
 class EarlyStopping():
@@ -57,7 +57,7 @@ class TCRabTrainer(TrainerBase):
     def __init__(
         self,
         model: Union[PreTrainedModel, nn.Module],
-        collator: TCRabCollator,
+        collator: TCRabCollatorForVJCDR3,
         train_dataset: Optional[datasets.Dataset] = None,
         test_dataset: Optional[datasets.Dataset] = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
@@ -79,6 +79,8 @@ class TCRabTrainer(TrainerBase):
         max_train_sequence: int = 0,
         n_per_batch: int = 10,
         shuffle: bool = False,
+        balance_label: bool = False,
+        label_weight: Optional[torch.Tensor] = None,
         show_progress: bool = False,
         early_stopping: bool = False
     ):
@@ -123,10 +125,27 @@ class TCRabTrainer(TrainerBase):
                 epoch_indices_mlm = epoch_indices_mlm.to(self.device)
                 epoch_attention_mask_mlm = epoch_attention_mask_mlm.to(self.device)
                 epoch_label_ids = None
+
                 if 'tcr_label' in self.train_dataset.features.keys():
                     epoch_label_ids = torch.tensor(
                         self.train_dataset[j:j+n_per_batch]['tcr_label'], dtype=torch.int64
                     ).to(self.device)
+                    if balance_label:
+                        label_counter = Counter(epoch_label_ids.cpu().numpy())
+                        min_label_number = np.min(list(label_counter.values()))
+                        min_label = {v:k for k,v in label_counter.items()}[min_label_number]
+                        min_indices = np.argwhere(epoch_label_ids.cpu().numpy() == min_label).squeeze()
+                        for k in label_counter.keys():
+                            if k != min_label:
+                                indices = np.argwhere(epoch_label_ids.cpu().numpy() == k).squeeze()
+                                np.random.shuffle(indices)
+                                indices = indices[:min_label_number]
+                                min_indices = np.concatenate([min_indices, indices])
+                        epoch_indices_mlm = epoch_indices_mlm[min_indices]
+                        epoch_attention_mask_mlm = epoch_attention_mask_mlm[min_indices]
+                        epoch_label_ids = epoch_label_ids[min_indices]
+                        epoch_token_type_ids = epoch_token_type_ids[min_indices]
+                        epoch_indices = epoch_indices[min_indices]
 
 
                 self.optimizer.zero_grad()
@@ -139,7 +158,9 @@ class TCRabTrainer(TrainerBase):
                 )
 
                 if epoch_label_ids is not None:
-                    prediction_loss = nn.BCEWithLogitsLoss()(
+                    prediction_loss = nn.BCEWithLogitsLoss(
+                        weight=label_weight.to(self.device)
+                    )(
                         output["prediction_out"], 
                         one_hot(epoch_label_ids.unsqueeze(1), 4)
                     )

@@ -10,10 +10,8 @@ import logomaker
 import os
 from ..utils._utilities import seqs2mat, mafft_alignment
 from ._palette import godsnot_102
-from ..tool._deep_insight_result import TCRDeepInsightClusterResult
+from ..tool._deep_insight_result import TDIResult
 
-
-from matplotlib.font_manager import FontProperties
 import matplotlib.font_manager as fm
 import warnings
 from pathlib import Path
@@ -493,7 +491,7 @@ def _plot_gex_tcr_selected_tcrs(
 
 
 def plot_selected_tcrs(
-    tcr_cluster_result: TCRDeepInsightClusterResult,
+    tcr_cluster_result: TDIResult,
     color: str,
     tcrs: List[str],
     tcrs_background: List[str],
@@ -502,7 +500,7 @@ def plot_selected_tcrs(
     """
     Plot the tcrs on the umap of the gex data, with the TCRs as a pie chart and logo plot
 
-    :param tcr_cluster_result: TCRDeepInsightClusterResult
+    :param tcr_cluster_result: TDIResult
     :param color: str
     :param tcrs: list
     :param palette: dict (optional) 

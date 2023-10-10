@@ -1,7 +1,7 @@
 import atexit
 import time
 from functools import reduce
-
+import tqdm
 
 verbosity = 1
 """ Global verbosity level, choose from {0,...,6}. """
@@ -90,7 +90,7 @@ def mt(*msg):
         # in python 3, the following works
         # print(*msg)
         # due to compatibility with the print statement in python 2 we choose
-        print(time.asctime(), end = '\t')
+        print(time.asctime() + ' - TDI - INFO - ', end = '\t')
         print(' '.join([str(m) for m in msg]))
     else:
         out = ''
@@ -112,7 +112,7 @@ def mw(*msg):
         # in python 3, the following works
         # print(*msg)
         # due to compatibility with the print statement in python 2 we choose
-        print(time.asctime(), end = '\t')
+        print(time.asctime() + ' - TDI - WARNING - ', end = '\t')
         print(Colors.YELLOW + ' '.join([str(m) for m in msg]) + Colors.NC)
     else:
         out = ''
@@ -146,6 +146,12 @@ def is_notebook() -> bool:
     except NameError:
         return False      # Probably standard Python interpreter
 
+def get_tqdm():
+    if is_notebook():
+        from tqdm.autonotebook import tqdm as tqdm_notebook
+        return tqdm_notebook
+    else:
+        return tqdm.tqdm
 
 def _terminate():
     """ 
@@ -155,7 +161,7 @@ def _terminate():
     if verbosity > 0 and not is_notebook():
         now = time.time()
         elapsed_since_start = now - start
-        mt(_sec_to_str(elapsed_since_start),'- total runtime')
+        # mt(_sec_to_str(elapsed_since_start),'- total runtime')
 
 
 # further global variables

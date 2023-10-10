@@ -1,20 +1,20 @@
 import scanpy as sc 
 import datasets
 import torch 
-import tqdm 
 import numpy as np
 import pandas as pd
 
 from ._model import TRABModelMixin
-from ._tokenizer import TCRabTokenizer
+from ._tokenizer import TCRabTokenizerForVJCDR3
 from ..utils._decorators import typed
+from ..utils._logger import get_tqdm
 from ..utils._compat import Literal
 
 @typed({
     "adata": sc.AnnData,
-    "tokenizer": TCRabTokenizer
+    "tokenizer": TCRabTokenizerForVJCDR3
 })
-def tcr_adata_to_datasets(adata: sc.AnnData, tokenizer: TCRabTokenizer) -> datasets.arrow_dataset.Dataset :
+def tcr_adata_to_datasets(adata: sc.AnnData, tokenizer: TCRabTokenizerForVJCDR3) -> datasets.arrow_dataset.Dataset :
     """
     Convert adata to tcr datasets
     :param adata: AnnData
@@ -35,13 +35,9 @@ def tcr_adata_to_datasets(adata: sc.AnnData, tokenizer: TCRabTokenizer) -> datas
     )
     return tcr_dataset
 
-@typed({
-    "df": pd.DataFrame,
-    "tokenizer": TCRabTokenizer
-})
 def tcr_dataframe_to_datasets(
     df: pd.DataFrame,
-    tokenizer: TCRabTokenizer
+    tokenizer: TCRabTokenizerForVJCDR3
 ) -> datasets.arrow_dataset.Dataset :
     """
     Convert dataframe to tcr datasets
@@ -92,6 +88,7 @@ def to_embedding_tcr_only(
     all_embedding = []
     with torch.no_grad():
         if progress:
+            import tqdm
             for_range = tqdm.trange(0,len(eval_dataset),n_per_batch)
         else:
             for_range = range(0,len(eval_dataset),n_per_batch)
@@ -143,10 +140,21 @@ def to_embedding_tcr_only_from_pandas_v2(
     tokenizer, 
     device,  
     n_per_batch=64, 
-    mask_tr='none'
+    mask_tr='none',
+    pooling: Literal["cls", "mean", "max", "pool", "trb", "tra", "weighted"] = "mean",
+    pooling_weight = (0.1,0.9),
 ):
+    original_pooling = None 
+    if pooling != model.pooling:
+        original_pooling = model.pooling
+        model.pooling = pooling
+
     all_embedding = []
+    import tqdm
     for i in tqdm.trange(0,len(df), n_per_batch):
         ds = tcr_dataframe_to_datasets(df.iloc[i:i+n_per_batch,:], tokenizer)['train']
         all_embedding.append(to_embedding_tcr_only(model, ds, 'hidden_states', device, mask_tr=mask_tr))
+        
+    if original_pooling is not None:
+        model.pooling = original_pooling
     return np.vstack(all_embedding)

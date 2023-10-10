@@ -32,6 +32,9 @@ if not within_flit():  # see function docstring on why this is there
     from . import utils as ut
     from . import data as data
 
+    from .tool._deep_insight_result import TDIResult
+
+    load_tdi_result = TDIResult.load_from_disk
 
     from anndata import AnnData, concat
     from anndata import (

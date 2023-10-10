@@ -154,7 +154,7 @@ class FCLayer(nn.Module):
         self.out_dim = out_dim
         self.device = device 
 
-    def forward(self, X: torch.Tensor, cat_list: torch.Tensor =  None):
+    def forward(self, X: torch.Tensor, cat_list: torch.Tensor =  None, return_category_embedding: bool = False):
         category_embedding = []
         if self.n_category > 0:
             if cat_list != None:
@@ -178,7 +178,10 @@ class FCLayer(nn.Module):
                         category_embedding.append(self.cat_embedding[i](cat.unsqueeze(0).T))
                
             category_embedding = torch.hstack(category_embedding).to(self.device)
-            return self._fclayer(torch.hstack([X[:,:self.in_dim], category_embedding]))
+            if return_category_embedding:
+                return self._fclayer(torch.hstack([X[:,:self.in_dim], category_embedding])), category_embedding
+            else: 
+                return self._fclayer(torch.hstack([X[:,:self.in_dim], category_embedding]))
         else:
             return self._fclayer(X)
 

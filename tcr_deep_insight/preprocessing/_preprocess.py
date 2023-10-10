@@ -7,7 +7,7 @@ import pandas as pd
 from scipy import sparse
 from collections import Counter
 import matplotlib.pyplot as plt
-from typing import Callable, Optional, Union, Iterable
+from typing import Callable, List, Optional, Union, Iterable
 from functools import partial
 from pathlib import Path
 from ..utils._logger import mt
@@ -631,10 +631,12 @@ def update_anndata(
 
 @typed({
     'gex_adata': sc.AnnData,
+    'gex_embedding_key': str,
     'agg_index': pd.DataFrame,
 })
 def aggregated_gex_embedding_by_tcr(
         gex_adata: sc.AnnData,
+        gex_embedding_key: str,
         agg_index: pd.DataFrame,
     ):
     """
@@ -648,25 +650,27 @@ def aggregated_gex_embedding_by_tcr(
     all_gex_embedding = []
     for i in agg_index['index']:
         all_gex_embedding.append(
-            gex_adata.obsm["X_gex"][i].mean(0)
+            gex_adata.obsm[gex_embedding_key][i].mean(0)
         )
     all_gex_embedding = np.vstack(all_gex_embedding)
     return all_gex_embedding
 
 @typed({
     'gex_adata': sc.AnnData,
-    'additional_label_keys': Iterable[str],
+    'gex_embedding_key': str,
+    'additional_label_keys': List[str],
     'map_function': Callable
 })
 def unique_tcr_by_individual(
         gex_adata: sc.AnnData,
+        gex_embedding_key: str = 'X_gex',
         label_key: Optional[str] = None,
         additional_label_keys: Iterable[str] = None,
         aggregate_func: Callable = default_aggrf
     ):
     """
     Unique TCRs by individual and aggregate GEX embedding by TCR. Unique TCR is defined by the combination of TRAV,TRAJ,TRBV,TRBJ,CDR3α,CDR3β and individual. 
-    Also aggregate GEX embedding by TCR, and add the aggregated GEX embedding to the tcr_adata.obsm['X_gex'].
+    Also aggregate GEX embedding by TCR, and add the aggregated GEX embedding to the tcr_adata.obsm[gex_embedding_key].
 
     :param label_key: Key in adata.obs where TCR type abels are stored. Default: 'cell_type', where 'cell_type' should be included in adata.obs.columns
     :param additional_label_keys: Additional keys in adata.obs where TCR type labels are stored. Default: None
@@ -697,7 +701,7 @@ def unique_tcr_by_individual(
             columns = TRAB_DEFINITION + ['individual']
         ),
         obsm={
-            "X_gex": aggregated_gex_embedding_by_tcr(gex_adata, agg_index)
+            gex_embedding_key: aggregated_gex_embedding_by_tcr(gex_adata, gex_embedding_key, agg_index)
         }
     )
 
@@ -726,3 +730,30 @@ def unique_tcr_by_individual(
     )
     return tcr_adata
 
+def annotate_t_cell_cd4_cd8(adata, use_rep='X_gex'):
+    adata.obs["cd4_cd8_class"] = None
+    adata.obs.loc[
+        ((adata.X[:,list(adata.var_names).index("CD8A")].toarray()  == 0) & \
+         (adata.X[:,list(adata.var_names).index("CD8B")].toarray()  == 0) & \
+         (adata.X[:,list(adata.var_names).index("CD4")].toarray() > 0) ).flatten()
+    ,"cd4_cd8_class"] = "CD4"
+    adata.obs.loc[
+        (((adata.X[:,list(adata.var_names).index("CD8A")].toarray() > 0) | \
+        (adata.X[:,list(adata.var_names).index("CD8B")].toarray() > 0)) & \
+        (adata.X[:,list(adata.var_names).index("CD4")].toarray() == 0) ).flatten()
+    ,"cd4_cd8_class"] = "CD8"
+    adata.obs.loc[
+        ((adata.X[:,list(adata.var_names).index("CD8A")].toarray() == 0) & \
+         (adata.X[:,list(adata.var_names).index("CD8B")].toarray() == 0) & \
+        (adata.X[:,list(adata.var_names).index("CD4")].toarray() == 0) ).flatten()
+    ,"cd4_cd8_class"] = "double_negative"
+    adata.obs.loc[
+        (((adata.X[:,list(adata.var_names).index("CD8A")].toarray() > 0) | \
+        (adata.X[:,list(adata.var_names).index("CD8B")].toarray() > 0)) & \
+        (adata.X[:,list(adata.var_names).index("CD4")].toarray() > 0) ).flatten()
+    ,"cd4_cd8_class"] = "double_positive"
+    from sklearn.neighbors import KNeighborsClassifier
+    nn = KNeighborsClassifier(n_neighbors=13)
+    nn.fit(adata[list(map(lambda x: x in ["CD8","CD4"], adata.obs['class']))].obsm[use_rep], adata[list(map(lambda x: x in ["CD8","CD4"], adata.obs['class']))].obs["class"])
+    Y = nn.predict(adata.obsm[use_rep])
+    adata.obs["cd4_cd8_annotation"] = Y
