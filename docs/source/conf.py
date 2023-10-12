@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.abspath(os.path.join('..', '..')))
 print(sys.version)
 # -- Project information -----------------------------------------------------
 
-project = 'TCR-DeepInsight'
+project = 'T-DeepInsight'
 copyright = '2023, Ziwei Xue'
 author = 'Ziwei Xue'
 
