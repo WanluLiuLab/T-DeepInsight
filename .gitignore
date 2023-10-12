@@ -7,11 +7,15 @@ __pycache__/
 # C extensions
 *.so
 database/
-data/
+datasets/
+pretrained_weights/
 *.db
 *.csv
 *.tsv
 *.data
+*.pt 
+*.ckpt 
+*.h5ad
 *.pkl
 *.fa
 *.json
