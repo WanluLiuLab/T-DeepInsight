@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="TDeepInsight",
-    version="0.0.2",
+    version="0.0.3",
     author="Ziwei Xue",
     author_email="xueziweisz@gmail.com",
     description="TDeepInsight: a deep learning framework for single-cell GEX/TCR  analysis",

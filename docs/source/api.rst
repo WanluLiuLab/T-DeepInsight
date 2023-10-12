@@ -59,7 +59,7 @@ Tool
 Model
 -----
 
-.. autoclass:: t_deep_insight.model.TCRabModel
+.. autoclass:: t_deep_insight.model.TCRModel
     :members:
     :undoc-members:
     :show-inheritance:

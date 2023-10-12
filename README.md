@@ -97,6 +97,8 @@ Operation System requirements for running TCR-DeepInsight include the installati
 ```shell
 conda create -n tcr-deep-insight -f environment.yml
 conda activate tcr-deep-insight
+git clone git@github.com:WanluLiuLab/T-DeepInsight.git
+
 ```
 
 **RAPIDS**
