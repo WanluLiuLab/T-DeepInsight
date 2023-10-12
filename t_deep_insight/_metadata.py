@@ -21,6 +21,10 @@ def refresh_entry_points():
         pass
 
 
+from ._version import version 
+__version__ = version
+
+'''
 try:
     from setuptools_scm import get_version
     refresh_entry_points()
@@ -32,8 +36,7 @@ except (ImportError, LookupError, FileNotFoundError):
         metadata = pkg_metadata(here.name)
         __version__ = metadata['Version']
     except:
-        from ._version import version 
-        __version__ = version
+'''
 
         
 def within_flit():
