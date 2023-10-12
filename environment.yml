@@ -17,18 +17,15 @@ dependencies:
       - datasets==1.18.4
       - anndata==0.8.0
       - scanpy==1.8.1
+      - scirpy==0.10.1
       - numpy==1.20.3
       - pandas==1.4.2
       - matplotlib==3.5.2
       - seaborn==0.11.2
       - scikit-learn==0.24.1 
-      - matplotlib==3.3.4 
       - einops==0.4.1 
       - biopython==1.79
-      - seaborn==0.12.2
       - torch==1.13.1+cu117
       - torchvision==0.14.1+cu117
       - torchaudio==0.13.1+cu117
-      - cuml==23.04.01
-      - dask_cuda==v23.04.00
-      - dask==2023.3.2
+      - logomaker

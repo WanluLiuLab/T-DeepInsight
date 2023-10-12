@@ -99,6 +99,10 @@ conda create -n tcr-deep-insight -f environment.yml
 conda activate tcr-deep-insight
 ```
 
+**RAPIDS**
+
+See [RAPIDS] https://docs.rapids.ai/install if using cuml in TDI package.
+
 
 ## Usage
 
