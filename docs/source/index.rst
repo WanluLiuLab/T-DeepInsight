@@ -16,7 +16,10 @@ Contents
 
    intro
    preprocessing
-   integration
-   notebooks/huARdb_TCR_DeepInsight_notebook_v2
+   gex_integration
+   gex_transfer
+   gex_retraining
+   tcr_training
+   notebooks/huARdb_T_DeepInsight_notebook
    notebooks/huARdb_CD8_Mapper
    api

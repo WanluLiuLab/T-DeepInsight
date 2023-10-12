@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import pandas as pd 
 
 huardb_annotation_low_cmap = {
     'CD4': '#1c83c5ff',
@@ -196,4 +197,6 @@ CD4-11	CD4_c11_Tisg	#C4D960
 """
 
 _chu_2023_annotation = _chu_2023_annotation_string.split("\n")[1:-1]
+_chu_2023_annotation = list(map(lambda x: x.split('\t'), _chu_2023_annotation))
+_chu_2023_annotation = pd.DataFrame(_chu_2023_annotation)
 chu_2023_annotation_cmap = dict(zip(_chu_2023_annotation.iloc[:,1], _chu_2023_annotation.iloc[:,2]))

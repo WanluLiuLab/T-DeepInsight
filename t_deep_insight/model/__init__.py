@@ -1,6 +1,6 @@
 from ._model import VAEMixin as VAEModel
-from ._model import TRABModelMixin as TCRabModel
-from ._trainer import TCRabTrainer
+from ._model import TRABModelMixin as TCRModel
+from ._trainer import TCRabTrainer as TCRModelTrainer
 from ._defaults import default_optimizer
 from . import _config as config
 from ._defaults import default_collator, default_tokenizer

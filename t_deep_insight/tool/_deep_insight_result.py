@@ -170,16 +170,26 @@ class TDIResult:
         :return: a pandas dataframe containing the cluster result
         """
         ret = []
+        cluster_indices = []
         cluster_labels = []
-        for i in range(len(self.data)):
-            ret.append(
-                list(map(lambda x: x.split("="), filter(lambda x: x != '-', self.data.obs.iloc[i].loc[
-                    list(filter(lambda z: 'TCRab' in z, self.data.obs.columns))
-                ].to_numpy())))
-            )
-            cluster_labels.append([self.data.obs.iloc[i].loc["cluster_index"]] * len(ret[-1]))
-        df = pd.DataFrame(FLATTEN(ret), columns = TRAB_DEFINITION + ['individual'])
-        df['cluster_index'] = FLATTEN(cluster_labels)
+        if self.cluster_label in self.data.obs.columns:
+            for i,j in zip(self.data.obs.iloc[:,0],self.data.obs[self.cluster_label]):
+                ret.append(
+                    list(map(lambda x: x.split("="), filter(lambda x: x != '-', i.split(","))))
+                )
+                cluster_indices.append([j] * len(ret[-1]))
+                cluster_labels.append([self.cluster_label] * len(ret[-1]))
+            df = pd.DataFrame(FLATTEN(ret), columns = TRAB_DEFINITION + ['individual'])
+            df['cluster_index'] = FLATTEN(cluster_indices)
+            df['cluster_label'] = FLATTEN(cluster_labels)
+        else:
+            for i,j in zip(self.data.obs.iloc[:,0],self.data.obs['cluster_index']):
+                ret.append(
+                    list(map(lambda x: x.split("="), filter(lambda x: x != '-', i.split(","))))
+                )
+                cluster_indices.append([j] * len(ret[-1]))
+            df = pd.DataFrame(FLATTEN(ret), columns = TRAB_DEFINITION + ['individual'])
+            df['cluster_index'] = FLATTEN(cluster_indices)
         return df
 
 

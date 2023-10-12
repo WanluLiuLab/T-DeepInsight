@@ -356,11 +356,13 @@ def _plot_gex_tcr_selected_tcrs(
             palette = sc.pl.palettes.default_102
     
         palette = dict(zip(set(gex_adata.obs[color]), palette))
+
+        
     plt.rcParams['figure.dpi'] = 300
     plt.rcParams['savefig.dpi'] = 300
     plt.rcParams['font.size'] = 14
     plt.rcParams['axes.linewidth'] = 0.5
-    plt.rcParams['font.family'] = "Arial"
+    plt.rcParams['font.family'] = "arial"
 
     if tcrs_background is not None:
         gs_kw = dict(width_ratios=[2,1,1], height_ratios=[1,1,1,1,1])

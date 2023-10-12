@@ -47,13 +47,11 @@ MMUS_REF_DATA = {
     "Tonly_no_thymus": MODULE_PATH / "./data/refdata/mouse/reft_name_mouse_nothymus.rds",
     "Tonly_with_thymus":  MODULE_PATH / "./data/refdata/mouse/reft_name_mouse.rds"
 }
-"""
-Reference muose T/B cell annotation data for singleR
+"""Reference muose T/B cell annotation data for singleR
 Monaco, et al. (2019). RNA-Seq Signatures Normalized by mRNA Abundance Allow Absolute Deconvolution of Human Immune Cell Types. 
 Cell Reports 26, 1627-1640.e7. 10.1016/j.celrep.2019.01.041.
 The reference data is subsetted to only contain T cells, removing other immune cell types. For pro-T and pre-T cells, 
 use `Tonly_with_thymus`. For mature T cells, use `Tonly_no_thymus`.
-
 
 :attr:`Tonly_no_thymus`: T cell only reference data without thymus derived T cells
 :attr:`Tonly_with_thymus`: T cell only reference data with thymus derived T cells

@@ -87,8 +87,8 @@ class TRABModelMixin(nn.Module):
         :param labels_number: Number of labels
 
         :example:
-            >>> from tcr_deep_insight as tdi
-            >>> model = tdi.model.TCRabModel(
+            >>> from t_deep_insight as tdi
+            >>> model = tdi.model.TCRModel(
             >>>    tdi.model.config.get_human_config(),
             >>>    labels_number=4
             >>> )
@@ -255,8 +255,8 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
        batch_hidden_dim: int = 8,
        batch_embedding: Literal["embedding", "onehot"] = "onehot",
        reconstruction_method: Literal['mse', 'zg', 'zinb'] = 'zinb',
-       constrain_n_label: bool = False,
-       constrain_n_batch: bool = False,
+       constrain_n_label: bool = True,
+       constrain_n_batch: bool = True,
        constrain_latent_method: Literal['mse', 'normal'] = 'mse',
        constrain_latent_embedding: bool = False,
        constrain_latent_key: str = 'X_gex',
@@ -268,7 +268,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
        inject_label: bool = False,
        inject_additional_batch: bool = True,
        mmd_key: Optional[Literal['batch','label']] = None,
-       new_adata_key: str = 'new_adata',
+       new_adata_key: str = 'undefined',
        device: Union[str, torch.device] = "cpu",
        pretrained_state_dict: Optional[Mapping[str, torch.Tensor]] = None,
     ) -> None:
@@ -302,7 +302,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         :param device: Union[str, torch.device]. Device to use. Default: "cpu"
 
         :example:
-            >>> from tcr_deep_insight as tdi
+            >>> from t_deep_insight as tdi
             >>> model = tdi.model.VAEModel(
             >>>    adata,
             >>>    batch_key = 'batch',
@@ -502,7 +502,13 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         self.load_state_dict(state_dict)
 
     def get_config(self):
+        """
+        Get the model config
+
+        :return: dict. Model config dictionary
+        """
         return {
+            'hidden_stacks': self._hidden_stacks,
             'n_latent': self.n_latent,
             'n_batch': self.n_batch,
             'n_label': self.n_label,
@@ -512,12 +518,29 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
             'label_key': self.label_key,
             'additional_batch_keys': self.additional_batch_keys,
             'additional_label_keys': self.additional_label_keys,
+            'dispersion': self.dispersion,
+            'log_variational': self.log_variational,
+            'bias': self.fcargs['bias'],
+            'use_batch_norm': self.fcargs['use_batch_norm'],
+            'use_layer_norm': self.fcargs['use_layer_norm'],
+            'batch_hidden_dim': self.batch_hidden_dim,
+            'batch_embedding': self.batch_embedding,
+            'reconstruction_method': self.reconstruction_method,
+            'encode_libsize': self.encode_libsize,
+            'decode_libsize': self.decode_libsize,
+            'dropout_rate': self.fcargs['dropout_rate'],
+            'activation_fn': self.fcargs['activation_fn'],
+            'inject_batch': self.inject_batch,
+            'inject_label': self.inject_label,
+            'inject_additional_batch': self.inject_additional_batch,
+            'mmd_key': self.mmd_key,
+            'new_adata_key': self.new_adata_key,
         }
 
-    def save_to_disk(self, path: Union[str, Path]):
+    def save_to_disk(self, path_to_state_dict: Union[str, Path]):
         """
         Save the model to disk
-        :param path: str or Path. Path to save the model
+        :param path_to_state_dict: str or Path. Path to save the model
         """
         model_state_dict = self.state_dict()
         model_var_index = self.adata.var.index
@@ -534,15 +557,56 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
             "additional_batch_category": self.additional_batch_category,
             "additional_batch_category_summary": self.additional_batch_category_summary,
         }
-        torch.save(state_dict, path)
+        torch.save(state_dict, path_to_state_dict)
 
-    def load_from_disk(self, path: Union[str, Path]):
+    def load_from_disk(self, path_to_state_dict: Union[str, Path]):
         """
         Load the model from disk
-        :param path: str or Path. Path to load the model
+        :param path_to_state_dict: str or Path. Path to load the model
         """
-        state_dict = torch.load(path)
-        self.load_state_dict(state_dict["model_state_dict"])
+        state_dict = torch.load(path_to_state_dict)
+        self.partial_load_state_dict(state_dict["model_state_dict"])
+
+    @staticmethod
+    def setup_anndata(adata: sc.AnnData, path_to_state_dict: Optional[Union[str, Path]] = None):
+        """
+        Setup the model with adata
+        :param adata: AnnData. AnnData to setup the model
+        :param path_to_state_dict: Optional[str, Path]. Path to the state dict to load
+        """
+        state_dict = torch.load(path_to_state_dict)
+        if state_dict["batch_category"] is not None:
+            adata.obs[state_dict['model_config']['batch_key']] = 'undefined'
+            adata.obs[state_dict['model_config']['batch_key']] = pd.Categorical(
+                list(adata.obs[state_dict['model_config']['batch_key']] ),
+                categories=state_dict["batch_category"].add_categories("undefined").categories
+            )
+        if state_dict["label_category"] is not None:
+            adata.obs[state_dict['model_config']['label_key']] = 'undefined'
+            adata.obs[state_dict['model_config']['label_key']] = pd.Categorical(
+                list(adata.obs[state_dict['model_config']['label_key']] ),
+                categories=state_dict["label_category"].add_categories("undefined").categories
+            )
+
+        if state_dict["additional_batch_category"] is not None:
+            for k in state_dict['model_config']['additional_batch_keys']:
+                adata.obs[k] = 'undefined'
+                adata.obs[k] = pd.Categorical(
+                    list(adata.obs[k] ),
+                    categories=state_dict["additional_batch_category"].add_categories("undefined").categories
+                )
+
+        if state_dict["additional_label_category"] is not None:
+            for k in state_dict['model_config']['additional_label_keys']:
+                adata.obs[k] = 'undefined'
+                adata.obs[k] = pd.Categorical(
+                    list(adata.obs[k] ),
+                    categories=state_dict["additional_label_category"].add_categories("undefined").categories
+                )
+
+
+
+            
 
     def initialize_dataset(self):
         mt("Initializing dataset into memory")
@@ -561,7 +625,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
 
                     
         if self.label_key is not None:
-            n_label_ = len(np.unique(list(filter(lambda x: x != self.new_adata_key, self.adata.obs[self.label_key]))))
+            n_label_ = len(np.unique(list(filter(lambda x: x != self.new_adata_key, pd.Categorical(self.adata.obs[self.label_key]).categories))))
 
             if self.n_label != n_label_:
                 mt(f"warning: the provided n_label={self.n_label} does not match the number of batch in the adata.")
@@ -588,9 +652,10 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
         if self.additional_label_keys is not None:
             self.n_cell_additional_label = [len(list(filter(lambda x: x != self.new_adata_key,self.adata.obs[x]))) for x in [self.label_key] + self.additional_label_keys]
 
-            self.n_additional_label_ = [len(np.unique(list(filter(lambda x: x != self.new_adata_key,self.adata.obs[x])))) for x in self.additional_label_keys]
+            self.n_additional_label_ = [len(np.unique(list(filter(lambda x: x != self.new_adata_key,pd.Categorical(self.adata.obs[x]).categories)))) for x in self.additional_label_keys]
 
-            self.additional_label_weight = sum(self.n_cell_additional_label) / torch.tensor(self.n_cell_additional_label)
+            # self.additional_label_weight = sum(self.n_cell_additional_label) / torch.tensor(self.n_cell_additional_label)
+            self.additional_label_weight = torch.tensor([1] * len(self.n_cell_additional_label), dtype=torch.float64).to(self.device)
             
             if self.n_additional_label == None or len(self.n_additional_label_) != len(self.n_additional_label):
                 mt(f"warning: the provided n_additional_label={self.n_additional_label} does not match the number of additional label in the adata.")
@@ -1123,7 +1188,7 @@ class VAEMixin(ReparameterizeLayerBase, MMDLayerBase):
             constrain_weight: float = 1.,
             optimizer_parameters: Iterable = None,
             validation_split: float = .2,
-            lr: bool = 1e-3,
+            lr: bool = 5e-5,
             lr_schedule: bool = False,
             lr_factor: float = 0.6,
             lr_patience: int = 30,

@@ -7,8 +7,8 @@ setuptools.setup(
     author_email="xueziweisz@gmail.com",
     description="TCRDeepInsight: a deep learning framework for single-cell GEX/TCR  analysis",
     long_description="TCRDeepInsight: a deep learning framework for single-cell GEX/TCR  analysis",
-    package_dir = {'': 'tcr_deep_insight'},
-    packages=setuptools.find_packages("tcr_deep_insight", exclude=[
+    package_dir = {'': 't_deep_insight'},
+    packages=setuptools.find_packages("t_deep_insight", exclude=[
         "*reference*",
         "*pretrained_weights*",
         "*docs*"

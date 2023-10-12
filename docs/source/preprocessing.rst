@@ -60,7 +60,7 @@ You can simply use our preprocessing pipeline to preprocess the data.
 .. code-block:: python
   :linenos:
 
-    from tcr_deep_insight.preprocessing._preprocess import *
+    from t_deep_insight.preprocessing._preprocess import *
     # VDJPreprocessingV1Human is for human data
     # VDJPreprocessingV1Mouse is for mouse data
     pp = VDJPreprocessingV1Human(

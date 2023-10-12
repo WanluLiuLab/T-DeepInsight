@@ -71,7 +71,7 @@ def get_default_cuml_reducer(**kwargs):
         raise Exception('CUDA is not available. Please install CUDA and cuml to use cumlUMAP or use get_default_umap_reducer')
 
 def get_default_reducer():
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and cuml_is_installed:
         return get_default_cuml_reducer()
     else:
         return get_default_umap_reducer()
@@ -90,11 +90,29 @@ def transfer_umap(
     return_reducer: bool = False,
     **kwargs
 ):
+    """
+    Transfer UMAP from reference_embedding to query_embedding
+
+    :param reference_embedding: Reference embedding
+    :param reference_umap: Reference UMAP
+    :param query_embedding: Query embedding
+    :param method: Method to use. Either 'retrain' or 'knn'. 
+        If 'retrain', use a new umap reducer. 
+        If 'knn', use reference_umap to find nearest neighbors and average their UMAP coordinates
+    :param n_epochs: Number of epochs to use for retraining. Ignore if method is 'knn'
+    :param use_cuml_umap: Use cumlUMAP instead of UMAP
+    :param subsample: Number of cells to subsample from reference_embedding
+    :param return_subsampled_indices: Return subsampled indices
+    :param return_subsampled_reference_umap: Return subsampled reference UMAP
+    :param return_reducer: Return reducer. Ignore if method is 'knn'
+    :param kwargs: Additional arguments to pass to UMAP
+    """
     indices = np.arange(len(reference_embedding))
     if subsample < len(indices):
         indices = np.random.choice(indices, size=subsample, replace=False)
 
     if method == 'retrain':
+        mt("Warning: retrain using UMAP reducer is not yet fully developed. Using knn instead.")
         if use_cuml_umap:
             raise NotImplementedError()
         else:

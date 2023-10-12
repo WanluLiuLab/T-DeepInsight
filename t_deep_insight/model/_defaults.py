@@ -8,17 +8,25 @@ def default_optimizer(model, *args, **kwargs):
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
     return (optimizer, scheduler)
 
-def default_tokenizer(species:Literal['human','mouse']):
+def default_tokenizer(
+    species:Literal['human','mouse'],
+    tra_max_length:int=48,
+    trb_max_length:int=48,
+):
     return TCRabTokenizerForVJCDR3(
-        tra_max_length=48, 
-        trb_max_length=48,
+        tra_max_length=tra_max_length, 
+        trb_max_length=trb_max_length,
         species=species
     )
 
-def default_collator(species:Literal['human','mouse']):
+def default_collator(
+    species:Literal['human','mouse'],
+    tra_max_length:int=48,
+    trb_max_length:int=48,
+):
     return TCRabCollatorForVJCDR3(
-        tra_max_length=48, 
-        trb_max_length=48,
+        tra_max_length=tra_max_length, 
+        trb_max_length=trb_max_length,
         species=species
     )
 
